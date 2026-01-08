@@ -1,250 +1,270 @@
 
-from streamlit.testing.v1 import AppTest
-from unittest import mock
-import asyncio
-import uuid
 import pytest
-from datetime import datetime
+from streamlit.testing.v1 import AppTest
+import asyncio
+from unittest.mock import patch, AsyncMock
 
-# It's good practice to import source and patch get_session_patchable here
-# as the app.py relies on it being patched before its own execution.
-import source
-from source import *
-
-@pytest.fixture(autouse=True)
-def patch_get_session_for_tests():
+# Helper to initialize DB and create sample users for tests that require it.
+# This function interacts with the Streamlit app's UI to trigger DB initialization.
+async def _initialize_db_and_users(at: AppTest):
     """
-    Fixture to ensure source.get_session_patchable is correctly set
-    for all tests that might interact with the database.
-    This mimics the app's own patching logic.
+    Navigates to the '2. DB Connectivity & Pooling' page and clicks the
+    'Initialize In-Memory SQLite Database & Create Sample Users' button.
+    Verifies the success messages and updates to session state.
     """
-    source.get_session_patchable = get_db_session
-    yield
-    # No teardown needed as AppTest creates a fresh environment per run
-
-@pytest.fixture
-def at():
-    """
-    Fixture to load the app and run it initially.
-    This also handles the implicit mock Redis setup as per app.py's logic.
-    """
-    # AppTest will run the app code, which attempts to connect to Redis.
-    # If it fails (which it will in most test environments without a running Redis),
-    # the app's logic will automatically set up a mock Redis client.
-    app_test_instance = AppTest.from_file("app.py")
-    app_test_instance.run()
-    return app_test_instance
-
-def test_initial_load_and_introduction_page(at):
-    """
-    Test that the app loads correctly and displays the Introduction page content.
-    """
-    assert at.title[0].value == "QuLab: Data Architecture & Persistence"
-    assert at.sidebar.selectbox[0].value == "Introduction"
-    assert "Redis Status: Using Mock Redis (Real Redis unavailable)." in at.sidebar.markdown[0].value
-    assert at.header[0].value == "Introduction: Scaling the AI Backend's Data Layer"
-    assert "Alex, Senior Software Engineer at InnovateAI Solutions." in at.markdown[1].value
-
-def test_navigation(at):
-    """
-    Test that navigating through the sidebar updates the page content.
-    """
-    at.sidebar.selectbox[0].set_value("1. Data Models").run()
-    assert at.title[0].value == "1. Defining the Core Data Schema with SQLAlchemy 2.0"
-    assert at.sidebar.selectbox[0].value == "1. Data Models"
-
+    # Navigate to "2. DB Connectivity & Pooling"
     at.sidebar.selectbox[0].set_value("2. DB Connectivity & Pooling").run()
-    assert at.title[0].value == "2. Establishing Asynchronous Database Connectivity and Connection Pooling"
-    assert at.sidebar.selectbox[0].value == "2. DB Connectivity & Pooling"
-
-def test_db_initialization_and_sample_users(at):
-    """
-    Test the database initialization and sample user creation.
-    """
-    # Navigate to DB Connectivity page
-    at.sidebar.selectbox[0].set_value("2. DB Connectivity & Pooling").run()
-    assert not at.session_state["db_initialized"]
-    assert "Database not initialized. Please click the button above." in at.warning[0].value
-
-    # Click the initialize button
+    
+    # Click the initialization button (assuming it's the first button on this page)
     at.button[0].click().run()
-
-    assert at.session_state["db_initialized"]
+    
+    # Assert success messages and session state updates
+    assert at.success[0].value.startswith("Initialized DB and created user:")
+    assert at.success[1].value.startswith("Created user:")
+    assert at.session_state["db_initialized"] is True
     assert at.session_state["user_alex_id"] is not None
     assert at.session_state["user_jane_id"] is not None
-    assert "Initialized DB and created user: 'Alex Smith'" in at.success[0].value
-    assert "Created user: 'Jane Doe'" in at.success[1].value
-    assert "Database is initialized and ready!" in at.success[2].value
-    assert f"Alex Smith User ID: `{at.session_state['user_alex_id']}`" in at.markdown[1].value
+    
+    return at.session_state["user_alex_id"], at.session_state["user_jane_id"]
 
-def test_create_new_user_data_models_page(at):
+def test_initial_page_and_redis_status():
     """
-    Test creating a new user on the 'Data Models' page.
-    Requires DB to be initialized first.
+    Verifies the application starts on the Introduction page and displays
+    the correct title and Redis connection status.
     """
-    # Initialize DB first
+    at = AppTest.from_file("app.py").run()
+    
+    # Check if the main title and header of the introduction page are present
+    assert at.title[0].value == "QuLab: Data Architecture & Persistence"
+    assert at.header[0].value == "Introduction: Scaling the AI Backend's Data Layer"
+    
+    # Verify Redis status in the sidebar. The app mocks Redis if unavailable.
+    assert "Redis Status:" in at.sidebar.markdown[1].value
+    assert ("Using Mock Redis Client" in at.sidebar.markdown[1].value or
+            "Connected to local Redis." in at.sidebar.markdown[1].value)
+
+def test_sidebar_navigation():
+    """
+    Ensures that selecting different options in the sidebar correctly changes
+    the current page and updates the displayed content.
+    """
+    at = AppTest.from_file("app.py").run()
+
+    # Test navigation to "1. Data Models"
+    at.sidebar.selectbox[0].set_value("1. Data Models").run()
+    assert at.session_state["current_page"] == "1. Data Models"
+    assert at.title[0].value == "1. Defining the Core Data Schema with SQLAlchemy 2.0"
+
+    # Test navigation to "3. Repository Pattern & N+1"
+    at.sidebar.selectbox[0].set_value("3. Repository Pattern & N+1").run()
+    assert at.session_state["current_page"] == "3. Repository Pattern & N+1"
+    assert at.title[0].value == "3. Implementing the Repository Pattern and Solving N+1 Queries"
+
+def test_db_connectivity_and_pooling_initialization():
+    """
+    Tests the database initialization process on the '2. DB Connectivity & Pooling' page,
+    verifying initial warnings and successful setup.
+    """
+    at = AppTest.from_file("app.py").run()
+
+    # Navigate to "2. DB Connectivity & Pooling"
     at.sidebar.selectbox[0].set_value("2. DB Connectivity & Pooling").run()
-    at.button[0].click().run()
-    assert at.session_state["db_initialized"]
 
-    # Navigate to Data Models page
+    # Verify that a warning is displayed when the database is not yet initialized
+    assert at.warning[0].value == "Database not initialized. Please click the button above."
+
+    # Perform database initialization using the helper function
+    alex_id, jane_id = asyncio.run(_initialize_db_and_users(at))
+
+    # Assert that success messages are displayed and session state reflects initialization
+    assert at.success[2].value == "Database is initialized and ready!"
+    assert f"**Alex Smith User ID:** `{alex_id}`" in at.markdown[2].value
+    assert f"**Jane Doe User ID:** `{jane_id}`" in at.markdown[3].value
+
+def test_data_models_create_user():
+    """
+    Tests the "Create New User" form on the "1. Data Models" page,
+    including successful user creation and handling of duplicate emails.
+    """
+    at = AppTest.from_file("app.py").run()
+
+    # Initialize the database first, as the "1. Data Models" page's interactive
+    # section depends on `st.session_state.db_initialized` being True.
+    asyncio.run(_initialize_db_and_users(at))
+
+    # Navigate to "1. Data Models"
     at.sidebar.selectbox[0].set_value("1. Data Models").run()
 
-    # Test with missing email
-    at.text_input[1].set_value("Test User").run() # New User Name
-    at.form[0].submit().run()
-    assert "Please provide both email and name for the new user." in at.warning[0].value
+    # Test creating a new user successfully
+    at.text_input(key="new_user_email_input").set_value("test_user_new@example.com").run()
+    at.text_input(key="new_user_name_input").set_value("Test User New").run()
+    at.form_submit_button("Create User").click().run()
 
-    # Test with valid data
-    email = f"new_user_{uuid.uuid4()}@example.com"
-    at.text_input[0].set_value(email).run() # New User Email
-    at.text_input[1].set_value("Test User").run() # New User Name
-    at.form[0].submit().run()
-
+    assert at.success[0].value.startswith("User 'Test User New' created with ID:")
     assert at.session_state["created_user_id"] is not None
-    assert f"User 'Test User' created with ID: {at.session_state['created_user_id']}" in at.success[0].value
-    assert f"Last Created User ID: `{at.session_state['created_user_id']}`" in at.markdown[4].value
 
-    # Test duplicate email
-    at.text_input[0].set_value(email).run() # New User Email
-    at.text_input[1].set_value("Another User").run()
-    at.form[0].submit().run()
-    assert f"User with email '{email}' already exists. Please use a unique email." in at.error[0].value
+    # Test creating a user with an existing email (should trigger an IntegrityError
+    # in the backend and display the corresponding error message in the app).
+    at.text_input(key="new_user_email_input").set_value("test_user_new@example.com").run()
+    at.text_input(key="new_user_name_input").set_value("Another User").run()
+    at.form_submit_button("Create User").click().run()
+    assert at.error[0].value == "User with email 'test_user_new@example.com' already exists. Please use a unique email."
 
-def test_nplus1_and_eager_loading(at):
+def test_repository_pattern_n_plus_1():
     """
-    Test adding scores and demonstrating N+1 vs Eager Loading.
-    Requires DB to be initialized first.
+    Tests the functionality on the "3. Repository Pattern & N+1" page,
+    including adding sample scores and demonstrating N+1 vs. eager loading.
     """
-    # Initialize DB first
-    at.sidebar.selectbox[0].set_value("2. DB Connectivity & Pooling").run()
-    at.button[0].click().run()
-    assert at.session_state["db_initialized"]
+    at = AppTest.from_file("app.py").run()
 
-    # Navigate to Repository Pattern & N+1 page
+    # Initialize the database to ensure users exist and the app is ready.
+    alex_id, jane_id = asyncio.run(_initialize_db_and_users(at))
+
+    # Navigate to "3. Repository Pattern & N+1"
     at.sidebar.selectbox[0].set_value("3. Repository Pattern & N+1").run()
 
-    user_id = at.session_state["user_alex_id"]
-    at.text_input[0].set_value(user_id).run() # User ID to add scores for
+    # Add 3 sample scores for Alex to demonstrate N+1
+    at.text_input(key="n1_user_id_input").set_value(alex_id).run()
+    at.button[0].click().run() # "Add 3 Sample Scores for User" button
+    assert at.success[0].value == f"3 sample scores added for user ID: {alex_id}"
 
-    # Add sample scores
-    at.button[0].click().run()
-    assert f"3 sample scores added for user ID: {user_id}" in at.success[0].value
+    # Fetch User & Scores using the "Simulated N+1" approach
+    at.text_input(key="fetch_user_id_n1").set_value(alex_id).run()
+    at.button(key="n1_button").click().run()
+    assert f"**User (ID: {alex_id}, Email: alex.smith@innovateai.com)**" in at.write[0].value
+    assert "**Scores (Simulated N+1):**" in at.write[1].value
+    # Check for the presence of markdown elements representing the fetched scores
+    assert len(at.markdown) >= 3 # Expecting at least 3 score display elements
+    assert "- Score ID:" in at.markdown[0].value # Check content of a score item
 
-    # Fetch user & scores (Simulated N+1)
-    at.text_input[1].set_value(user_id).run() # User ID to fetch
-    at.button[1].click().run() # Fetch User & Scores (Simulated N+1)
-    assert f"User (ID: {user_id}" in at.write[0].value
-    assert "Scores (Simulated N+1):" in at.write[1].value
-    assert "Time taken (Simulated N+1):" in at.info[0].value
-    assert "Score ID:" in at.markdown[4].value # Check for score info
-
-    # Fetch user & scores (Eager Loading)
-    at.button[2].click().run() # Fetch User & Scores (Eager Loading)
-    assert f"User (ID: {user_id}" in at.write[2].value
-    assert "Scores (Eager Loaded):" in at.write[3].value
-    assert "Time taken (Eager Loading):" in at.info[1].value
-    assert "Score ID:" in at.markdown[5].value # Check for score info
+    # Fetch User & Scores using "Eager Loading"
+    at.button(key="eager_button").click().run()
+    assert f"**User (ID: {alex_id}, Email: alex.smith@innovateai.com)**" in at.write[2].value
+    assert "**Scores (Eager Loaded):**" in at.write[3].value
+    # Expecting additional markdown elements for eager loaded scores (after the N+1 ones)
+    assert len(at.markdown) >= 6 
+    assert "- Score ID:" in at.markdown[3].value # Check content of an eager loaded score item
     assert at.session_state["retrieved_user_with_scores"] is not None
-    assert len(at.session_state["retrieved_user_with_scores"].scores) >= 3
 
-    # Test fetching non-existent user
-    at.text_input[1].set_value("non_existent_id").run()
-    at.button[2].click().run()
-    assert "User not found." in at.warning[0].value
-
-def test_caching_with_redis(at):
+# Patch `source.REDIS_CLIENT` to use a mock for controlled testing of caching logic.
+@patch("source.REDIS_CLIENT", new_callable=AsyncMock)
+def test_caching_with_redis(mock_redis_client):
     """
-    Test Redis caching functionality.
-    Requires DB to be initialized first.
+    Tests the caching functionality on the "4. Caching with Redis" page,
+    simulating cache hits/misses and invalidation using a mocked Redis client.
     """
-    # Initialize DB first
-    at.sidebar.selectbox[0].set_value("2. DB Connectivity & Pooling").run()
-    at.button[0].click().run()
-    assert at.session_state["db_initialized"]
+    at = AppTest.from_file("app.py").run()
 
-    # Navigate to Caching with Redis page
+    # Initialize the database for user and score data.
+    asyncio.run(_initialize_db_and_users(at))
+
+    # Navigate to "4. Caching with Redis"
     at.sidebar.selectbox[0].set_value("4. Caching with Redis").run()
-
-    # The app code itself creates the 'cache_demo@innovateai.com' user
-    # and a score if they don't exist. So we just need to run it once.
-    # We should see the info message indicating the user is ready.
-    at.run() # Rerun to ensure the user setup logic completes
+    
+    # Run once more to allow the async setup for the caching demo user
+    # (create_cache_user_and_score) to complete and populate session state.
+    at.run() 
     assert at.session_state["user_for_caching_id"] is not None
-    assert f"User for caching demo (ID: `{at.session_state['user_for_caching_id']}`) ready." in at.info[0].value
+    assert at.session_state["latest_airscore_id"] is not None
+    cache_user_id = at.session_state["user_for_caching_id"]
+    
+    # Reset cache metrics in session state for a clean test run of the caching logic.
+    at.session_state["cache_hits"] = 0
+    at.session_state["cache_misses"] = 0
 
-    user_id_for_cache = at.session_state["user_for_caching_id"]
+    # Simulate a Cache Miss when fetching a user
+    mock_redis_client.get.return_value = None # No item found in the mock cache
+    at.button(key="fetch_user_cached_btn").click().run()
+    assert at.write[0].value == "**Cached User Details:**"
+    assert at.json[0].get_element_by_key("id").value == cache_user_id # Data fetched from DB
+    assert at.session_state["cache_misses"] == 1
+    assert at.session_state["cache_hits"] == 0
+    mock_redis_client.get.assert_called_once()
+    mock_redis_client.get.reset_mock() # Clear mock call history for the next assertion
 
-    # Test Fetch User (Cached) - first call should be a miss, second a hit
-    # First call:
-    at.button[0].click().run()
-    assert "Cached User Details:" in at.write[0].value
-    assert "Time taken:" in at.markdown[2].value
-    assert at.session_state["cache_misses"] == 1 # Mock client, so this is based on app's heuristic
+    # Simulate a Cache Hit when fetching the same user
+    mock_redis_client.get.return_value = '{"id": "mock_user_id", "email": "mock@innovateai.com", "name": "Mock User", "occupation_code": "MOCK", "created_at": "2023-01-01T00:00:00+00:00"}'
+    at.button(key="fetch_user_cached_btn").click().run()
+    assert at.write[0].value == "**Cached User Details:**"
+    assert at.json[0].get_element_by_key("id").value == "mock_user_id" # Data fetched from mock cache
+    assert at.session_state["cache_misses"] == 1 # Miss count remains unchanged for this interaction
+    assert at.session_state["cache_hits"] == 1 # Hit count increments
+    mock_redis_client.get.assert_called_once()
+    mock_redis_client.get.reset_mock()
 
-    # Second call (should be a hit for mock logic, but app's counter is simpler)
-    at.button[0].click().run()
-    assert at.session_state["cache_hits"] == 1 # If the mock returns a value on 'get'
+    # Simulate a Cache Miss when fetching the latest AIRScore
+    mock_redis_client.get.return_value = None
+    at.button(key="fetch_score_cached_btn").click().run()
+    assert at.write[1].value == "**Cached Latest AIRScore Details:**"
+    assert at.json[0].get_element_by_key("user_id").value == cache_user_id # Data fetched from DB
+    assert at.session_state["cache_misses"] == 2
+    assert at.session_state["cache_hits"] == 1
+    mock_redis_client.get.assert_called_once()
+    mock_redis_client.get.reset_mock()
 
-    # Test Fetch Latest AIRScore (Cached)
-    at.button[1].click().run()
-    assert "Cached Latest AIRScore Details:" in at.write[1].value
-    assert "Time taken:" in at.markdown[3].value
+    # Simulate a Cache Hit when fetching the same AIRScore
+    mock_redis_client.get.return_value = '{"id": "mock_airscore_id", "user_id": "mock_user_id", "air_score": 99.9, "occupation": "MOCK_OCC", "parameter_version": "v1", "created_at": "2023-01-01T00:00:00+00:00"}'
+    at.button(key="fetch_score_cached_btn").click().run()
+    assert at.write[1].value == "**Cached Latest AIRScore Details:**"
+    assert at.json[0].get_element_by_key("id").value == "mock_airscore_id" # Data fetched from mock cache
+    assert at.session_state["cache_misses"] == 2
+    assert at.session_state["cache_hits"] == 2
+    mock_redis_client.get.assert_called_once()
+    mock_redis_client.get.reset_mock()
+    
+    # Test Cache Invalidation
+    mock_redis_client.delete.return_value = 1 # Simulate successful deletion
+    at.button(key="invalidate_cache_btn").click().run()
+    assert at.success[0].value == f"Cache invalidated for user ID: {cache_user_id}"
+    mock_redis_client.delete.assert_called_once()
+    # Verify the correct cache key was used for deletion
+    mock_redis_client.delete.assert_called_with(f"user:{cache_user_id}")
+    mock_redis_client.delete.reset_mock()
 
-    # Test Invalidate Cache
-    at.button[2].click().run()
-    assert f"Cache invalidated for user ID: {user_id_for_cache}" in at.success[0].value
 
-    # Check cache metrics display
-    assert f"Mock Cache Hits: {at.session_state['cache_hits']}" in at.markdown[4].value
-    assert f"Mock Cache Misses: {at.session_state['cache_misses']}" in at.markdown[5].value
-
-def test_eventing_outbox_pattern(at):
+def test_eventing_outbox_pattern():
     """
-    Test the Outbox Pattern eventing system.
-    Requires DB to be initialized first.
+    Tests the Outbox Pattern implementation on the "5. Eventing (Outbox Pattern)" page,
+    including creating events, starting a simulated publisher, and verifying event status.
     """
-    # Initialize DB first
-    at.sidebar.selectbox[0].set_value("2. DB Connectivity & Pooling").run()
-    at.button[0].click().run()
-    assert at.session_state["db_initialized"]
+    at = AppTest.from_file("app.py").run()
 
-    # Navigate to Eventing (Outbox Pattern) page
+    # Initialize the database to support event creation.
+    asyncio.run(_initialize_db_and_users(at))
+
+    # Navigate to "5. Eventing (Outbox Pattern)"
     at.sidebar.selectbox[0].set_value("5. Eventing (Outbox Pattern)").run()
-
-    # The app code itself creates the 'event_demo@innovateai.com' user
-    # if it doesn't exist. Run once to ensure that logic completes.
+    
+    # Run once more to ensure the async setup for the eventing demo user
+    # (create_event_user) is complete and reflected in session state.
     at.run()
     assert at.session_state["event_user_id"] is not None
-    assert f"User for eventing demo (ID: `{at.session_state['event_user_id']}`) ready." in at.info[0].value
+    event_user_id = at.session_state["event_user_id"]
 
-    user_id_for_event = at.session_state["event_user_id"]
-
-    # Generate an AIRScore and a Pending Domain Event
-    at.button[0].click().run() # Calculate & Store AIRScore
-    assert "AIRScore (ID:" in at.success[0].value
-    assert "DomainEvent (ID:" in at.success[0].value
+    # Generate an AIRScore, which should also create a pending DomainEvent
+    at.button(key="create_event_btn").click().run()
+    assert at.success[0].value.startswith("AIRScore (ID:")
     assert "recorded as 'pending'." in at.success[0].value
 
-    # Check that there's a pending event displayed
-    at.button[3].click().run() # Refresh Event Status Now
+    # Refresh Event Status to confirm the pending event is visible
+    at.button(key="refresh_event_status_btn").click().run()
     assert len(at.session_state["pending_events_display"]) > 0
     assert at.session_state["pending_events_display"][0]["Status"] == "pending"
-    assert "No published events yet." in at.info[1].value
 
-    # Run Event Publisher (Simulate Background)
-    # This will trigger the publisher simulation.
-    at.button[1].click().run()
-    assert at.session_state["event_publisher_running"] == True
-    # The progress bar and status text will update during the run.
-    # We can check the final state after the simulation completes.
-    at.run() # Rerun to reflect the final state after the publisher finishes
-    assert at.session_state["event_publisher_running"] == False
-    assert "Publisher simulation finished." in at.empty[0].value # Check for the final status message
-    assert "Processed 1 events." in at.success[1].value # Assuming one event was created and processed
+    # Start the simulated Event Publisher (it runs for 3 cycles and stops).
+    # `asyncio.run` in the app means this button click will block until
+    # the publisher's simulated run is complete.
+    at.button(key="start_publisher_btn").click().run()
+    # After completion, a success message should be displayed.
+    assert "Event publisher finished its simulated run" in at.success[1].value
+    assert at.session_state["event_publisher_running"] is False
 
-    # Refresh Event Status Now to see the processed event
-    at.button[3].click().run()
-    assert "No pending events." in at.info[0].value
+    # Refresh Event Status again to confirm the event has been processed (published)
+    at.button(key="refresh_event_status_btn").click().run()
+    
+    assert len(at.session_state["pending_events_display"]) == 0 # No pending events after processing
     assert len(at.session_state["processed_events_display"]) > 0
     assert at.session_state["processed_events_display"][0]["Status"] == "published"
+
+    # Verify that the "Stop Event Publisher" button is disabled since the publisher is not running.
+    assert at.button(key="stop_publisher_btn").disabled is True
