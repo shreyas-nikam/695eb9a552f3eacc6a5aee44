@@ -1,2 +1,15 @@
-
-streamlit==1.24.0
+numpy
+pandas
+matplotlib
+scikit-learn
+streamlit
+pytest
+scipy
+seaborn
+plotly
+requests
+sqlalchemy
+asyncpg
+redis
+pydantic
+uuid
