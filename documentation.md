@@ -3,451 +3,529 @@ summary: Data Architecture & Persistence Documentation
 feedback link: https://docs.google.com/forms/d/e/1FAIpQLSfWkOK-in_bMMoHSZfcIvAeO58PAH9wrDqcxnJABHaxiDqhSA/viewform?usp=sf_link
 environments: Web
 status: Published
-# QuLab: Data Architecture & Persistence for InnovateAI Solutions
+# QuLab: Building a Scalable AI Backend with Modern Data Architecture
 
-## Introduction - Scaling the AI Backend's Data Layer
-Duration: 0:05
-
-Welcome to Lab 2 of QuLab, focusing on **Data Architecture & Persistence** for InnovateAI Solutions. In this codelab, you will step into the shoes of Alex, a Senior Software Engineer at InnovateAI, tasked with building a robust, performant, and reliable data layer for their AI-powered assessment platform.
+## Introduction: Scaling the AI Backend's Data Layer
+Duration: 05:00
 
 <aside class="positive">
-<b>Why is this important?</b> A well-designed data architecture is the backbone of any scalable application, especially for AI platforms dealing with complex, high-volume data. It ensures data integrity, efficient access, and resilience against failures, directly impacting the application's performance and user experience.
+This codelab guides you through designing and implementing a robust, performant, and reliable data architecture for an AI-powered assessment platform. Understanding these patterns is crucial for any developer building scalable backend services.
 </aside>
 
-**The Challenge:** Alex needs to manage complex AI-related data, ensure efficient access patterns, handle concurrent requests, and reliably communicate events across a growing microservices ecosystem. This codelab demonstrates practical solutions using modern data persistence patterns.
+**Persona:** Alex, Senior Software Engineer at InnovateAI Solutions.
+**Organization:** InnovateAI Solutions is a cutting-edge company building an AI-powered assessment platform. This platform helps users evaluate their skills and receive AI-driven recommendations.
 
-**Key Objectives for Developers:**
+**The Challenge:** In Lab 1, Alex successfully laid the foundation for a scalable Python backend. Now, the focus shifts to the critical data layer. As InnovateAI's platform gains traction, Alex faces the challenge of designing and implementing a robust, performant, and reliable data architecture. This involves not only persisting complex AI-related data but also ensuring efficient access patterns, handling concurrent requests, and reliably communicating events across a growing microservices ecosystem. Alex needs to ensure the data layer can support high throughput, low latency, and maintain data integrity, all while being adaptable to future changes.
+
+This application simulates Alex's workflow in tackling these challenges, demonstrating practical application of modern data persistence patterns using SQLAlchemy 2.0 and Redis.
+
+### Key Objectives
 *   **Remember**: List SQLAlchemy relationship types and Redis data structures.
 *   **Understand**: Explain async database patterns and connection pooling.
-*   **Apply**: Implement the repository pattern with SQLAlchemy 2.0.
+*   **Apply**: Implement repository pattern with SQLAlchemy 2.0.
 *   **Analyze**: Compare caching strategies for different access patterns.
 *   **Create**: Design event tables for pub/sub architecture.
 
-**Tools and Concepts You'll Encounter:**
-*   **PostgreSQL**: A robust relational database for primary data storage.
-*   **SQLAlchemy 2.0**: A powerful Object-Relational Mapper (ORM) for Python, offering asynchronous support and modern type hints.
-*   **Alembic**: A database migration tool, often used alongside SQLAlchemy for schema version control.
-*   **Redis**: An in-memory data store used for caching and publish/subscribe (Pub/Sub) messaging.
-*   **asyncpg**: A high-performance asynchronous PostgreSQL driver.
-*   **Async Database Sessions**: Non-blocking database operations essential for high-throughput applications.
-*   **Repository Pattern**: An abstraction layer for data access logic, promoting clean architecture and testability.
-*   **Connection Pooling**: Managing a pool of database connections to minimize overhead and improve performance.
-*   **N+1 Query Problem**: A common performance anti-pattern and strategies to mitigate it (e.g., eager loading).
-*   **Read-Through Caching**: A caching strategy where the cache checks for data, and if not found, fetches it from the database and stores it for future use.
-*   **Outbox Pattern**: A reliable eventing pattern that ensures atomicity between business operations and event publishing.
+### Tools and Concepts Introduced
+*   **SQLAlchemy 2.0**: A powerful Object-Relational Mapper (ORM) for Python, offering asynchronous support, type hints, and modern declarative mapping. It bridges the gap between Python objects and relational database tables.
+*   **Redis**: An in-memory data store used for caching, real-time analytics, and as a message broker for publish/subscribe (Pub/Sub) patterns.
+*   **Async database sessions with context managers**: Leveraging `asyncio` for non-blocking I/O with databases, improving application responsiveness.
+*   **Repository pattern for data access abstraction**: A design pattern that centralizes data access logic, making the codebase cleaner, more testable, and loosely coupled from specific ORM or database implementations.
+*   **Connection pooling for scalability**: A technique to manage and reuse database connections, reducing the overhead of establishing new connections for every request and improving throughput.
+*   **Event sourcing tables for pub/sub (Outbox pattern)**: A robust pattern for reliably publishing domain events within a distributed system, ensuring atomicity between a business operation and event recording.
 
-This Streamlit application simulates Alex's workflow, providing an interactive demonstration of these concepts.
+### Application Architecture Overview
 
-## Setting Up the Streamlit Application
-Duration: 0:02
+Below is a high-level architecture diagram illustrating how different components of the application interact with the data layer.
 
-Before diving into the core concepts, let's understand how the Streamlit application is structured and initialized. The `app.py` file orchestrates the UI and interacts with the underlying data logic, which is assumed to be in `source.py`.
+```mermaid
+graph TD
+    A[Streamlit Frontend] --> B(Python Backend / Streamlit App)
+    B --> C(SQLAlchemy ORM)
+    C --> D[Database: SQLite / PostgreSQL]
+    B --> E[Redis Cache & Pub/Sub]
 
-The application sets up its page configuration and manages Redis client initialization.
+    D -- "Persistent Storage" --> C
+    E -- "Fast Access / Event Bus" --> B
 
-**Redis Client Setup**
-The application attempts to connect to a local Redis instance (`redis://localhost:6379/0`). If Redis is unavailable or `redis.asyncio` is not installed, it gracefully falls back to a `mock.AsyncMock` to ensure the application remains functional for demonstration purposes.
+    subgraph Data Layer
+        C
+        D
+        E
+    end
+
+    subgraph Backend Services
+        B
+        C
+    end
+```
+
+In this architecture:
+*   The **Streamlit Frontend** is the user interface.
+*   The **Python Backend / Streamlit App** contains the business logic and interacts with the data layer.
+*   **SQLAlchemy ORM** provides the object-relational mapping to the database.
+*   **Database (SQLite / PostgreSQL)** serves as the primary persistent data store.
+*   **Redis** acts as both a high-speed cache and a message broker for event-driven communication.
+
+This setup allows for efficient data persistence, retrieval, and inter-service communication, addressing the scalability challenges Alex faces.
+
+## 1. Defining the Core Data Schema with SQLAlchemy 2.0
+Duration: 08:00
+
+Alex starts by meticulously defining the data models that will underpin InnovateAI's AI assessment platform. This involves capturing user profiles, their ongoing assessments, the crucial AI-R scores, and a mechanism for tracking system events. He leverages SQLAlchemy 2.0's modern declarative mapping and type hints for clarity and robustness.
+
+Correctly structured data models are fundamental for reliable data storage, efficient querying, and understanding the relationships between different entities in a complex AI system. SQLAlchemy's ORM helps bridge the gap between Python objects and relational database tables, ensuring type safety and reducing boilerplate code.
+
+Relational Algebra is the foundation for database operations. A relationship between two tables, say `Users` and `Assessments`, implies a join operation. For example, to find all assessments for a user, one might perform a projection and join operation as shown below.
+$$ \pi_{\text{Assessment.*}}(\text{Users} \bowtie_{\text{Users.id} = \text{Assessments.user\_id}} \text{Assessments}) $$
+Here, $ \pi $ denotes projection (selecting specific columns) and $ \bowtie $ denotes natural join (combining rows from two tables based on a common column). SQLAlchemy relationships abstract this, making it object-oriented and intuitive in Python code.
+
+### SQLAlchemy Models Overview
+
+Here's a glimpse into the SQLAlchemy model definitions Alex has created:
+
+**TimestampMixin**: A reusable mixin for `created_at` and `updated_at` fields.
+```python
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+```
+
+**User Model**: Represents user profiles. It includes relationships to `Assessment` and `AIRScore` models. The `cascade="all, delete-orphan"` ensures that when a user is deleted, their related assessments and scores are also deleted.
+```python
+class User(Base, TimestampMixin):
+    __tablename__ = "users"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    occupation_code: Mapped[Optional[str]] = mapped_column(String(20))
+    education_level: Mapped[Optional[str]] = mapped_column(String(50))
+    years_experience: Mapped[Optional[float]] = mapped_column(Float)
+    assessments: Mapped[List["Assessment"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="selectin")
+    scores: Mapped[List["AIRScore"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="selectin")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "email": self.email,
+            "name": self.name,
+            "occupation_code": self.occupation_code,
+            "education_level": self.education_level,
+            "years_experience": self.years_experience,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+```
+
+**Assessment Model**: Tracks user's evaluation sessions. Each assessment is linked to a user via `user_id`.
+```python
+class Assessment(Base, TimestampMixin):
+    __tablename__ = "assessments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="in_progress")
+    component: Mapped[str] = mapped_column(String(50))
+    current_ability: Mapped[float] = mapped_column(Float, default=0.0)
+    items_administered: Mapped[int] = mapped_column(default=0)
+    user: Mapped["User"] = relationship(back_populates="assessments")
+```
+
+**AIRScore Model**: Stores AI-generated assessment results. This model includes various score components and `calculation_metadata` stored as JSON.
+```python
+class AIRScore(Base, TimestampMixin):
+    __tablename__ = "air_scores"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    occupation_code: Mapped[str] = mapped_column(String(20))
+    air_score: Mapped[float] = mapped_column(Float)
+    vr_score: Mapped[float] = mapped_column(Float)
+    hr_score: Mapped[float] = mapped_column(Float)
+    synergy_score: Mapped[float] = mapped_column(Float)
+    ci_lower: Mapped[float] = mapped_column(Float)
+    ci_upper: Mapped[float] = mapped_column(Float)
+    parameter_version: Mapped[str] = mapped_column(String(20))
+    calculation_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    user: Mapped["User"] = relationship(back_populates="scores")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "occupation_code": self.occupation_code,
+            "air_score": self.air_score,
+            "vr_score": self.vr_score,
+            "hr_score": self.hr_score,
+            "synergy_score": self.synergy_score,
+            "ci_lower": self.ci_lower,
+            "ci_upper": self.ci_upper,
+            "parameter_version": self.parameter_version,
+            "calculation_metadata": self.calculation_metadata,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+```
+
+**DomainEvent Model**: For reliable event communication (Outbox Pattern). This is crucial for distributed systems. The `payload` field uses SQLAlchemy's `JSON` type for flexible storage of event data.
+```python
+class DomainEvent(Base, TimestampMixin):
+    __tablename__ = "domain_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    aggregate_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    aggregate_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (Index('ix_events_status_created', 'status', 'created_at'),)
+```
+
+Alex has now laid out the blueprints for the application's data. The `User` model captures core profile information, `Assessment` tracks user progress, `AIRScore` stores AI-generated evaluation results, and `DomainEvent` is for reliable event communication. The relationships are defined using `relationship` and `ForeignKey`, ensuring data integrity. `cascade="all, delete-orphan"` on `User` relationships simplifies data lifecycle management.
+
+### Interactive Model Demonstration: Create a New User
+
+Navigate to the "1. Data Models" section in the Streamlit application.
+Use the form to create a new user and observe it being persisted.
+
+1.  Enter a unique **New User Email** (e.g., `new.user@example.com`).
+2.  Enter a **New User Name** (e.g., `New Test User`).
+3.  Click the **Create User** button.
+
+You should see a success message with the newly created user's ID. This demonstrates the basic `create` operation through the `UserRepository`.
+
+## 2. Establishing Asynchronous Database Connectivity and Connection Pooling
+Duration: 07:00
+
+InnovateAI's AI platform needs to handle many concurrent user requests without blocking. Alex knows that synchronous database operations can become a bottleneck, especially with a growing user base. He sets up an asynchronous database connection using SQLAlchemy 2.0 with the `aiosqlite` driver (for this codelab's SQLite setup; `asyncpg` would be used for PostgreSQL) and configures connection pooling to efficiently manage database resources. This configuration is essential for maximizing throughput and responsiveness.
+
+Asynchronous programming is crucial for high-performance I/O-bound applications like web services. Connection pooling prevents the overhead of repeatedly establishing new database connections, improving throughput and responsiveness under load. Without it, each new request might incur the cost of a full database handshake, drastically slowing down the application.
+
+### Key Concepts
+
+*   **Throughput ($ \Theta $)**: The rate at which requests are processed. Asynchronous I/O aims to maximize $ \Theta $ by minimizing idle CPU time during I/O wait.
+    $$ \Theta = \frac{\text{Number of requests}}{\text{Total time}} $$
+*   **Connection Pool Efficiency**: The effective connection pool size can be estimated as the number of available connections $ N_{\text{avail}} $ out of the maximum pool size $ N_{\text{max}} $. A well-tuned pool minimizes latency due to connection acquisition and releases resources promptly.
+*   **ACID Properties**: Transactional guarantees are crucial for data integrity:
+    *   **Atomicity**: Operations within a transaction are all or nothing.
+    *   **Consistency**: A transaction brings the database from one valid state to another.
+    *   **Isolation**: Concurrent transactions produce the same result as if they were executed sequentially.
+    *   **Durability**: Once a transaction is committed, it remains committed even in case of power loss.
+
+### Database Engine and Session Setup
+
+The `async_engine` and `AsyncSessionLocal` are central to Alex's asynchronous strategy. The `get_session` context manager ensures that database connections are properly acquired and released. The `pool_size` and `max_overflow` parameters are crucial for connection pooling, allowing the application to reuse existing connections and handle spikes in demand gracefully.
 
 ```python
-import streamlit as st
-import asyncio
-import uuid
-import time
-import sys
-from datetime import datetime
-from typing import Optional, List, Dict, Any
-from unittest import mock
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+#  Configuration 
+DATABASE_URL = "sqlite+aiosqlite:///./test.db" # Using aiosqlite for async SQLite
 
-import source
-from source import * # Import all necessary components from source.py
+#  Database Engine and Session Setup 
+async_engine = create_async_engine(DATABASE_URL, echo=False, future=True, pool_size=10, max_overflow=20)
+AsyncSessionLocal = sessionmaker(
+    async_engine, expire_on_commit=False, class_=AsyncSession
+)
 
-#  Streamlit Page Config 
-st.set_page_config(page_title="QuLab: Data Architecture & Persistence", layout="wide")
-st.sidebar.image("https://www.quantuniversity.com/assets/img/logo5.jpg")
-st.sidebar.divider()
-st.title("QuLab: Data Architecture & Persistence")
-st.divider()
-
-#  Database Session Management 
-async def get_db_session():
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
 
-# CRITICAL: Patch get_session_patchable in source.py so internal calls use the real DB session
-source.get_session_patchable = get_db_session
-
-#  Redis Client Setup 
-if "redis_client" not in st.session_state:
-    st.session_state.redis_client = None
-    st.session_state.redis_status = "Checking..."
-
-try:
-    import redis.asyncio as aioredis
-    async def setup_redis():
-        r = aioredis.from_url("redis://localhost:6379/0", encoding="utf-8", decode_responses=True)
-        await r.ping()
-        return r, "Connected to local Redis."
-
-    try:
-        redis_instance, status = asyncio.run(asyncio.wait_for(setup_redis(), timeout=1.0))
-        REDIS_CLIENT = redis_instance
-        st.session_state.redis_status = status
-    except Exception as e:
-        print(f"Redis connection failed: {e}", file=sys.stderr)
-        st.session_state.redis_status = f"Using Mock Redis (Real Redis unavailable - {e})."
-        REDIS_CLIENT = mock.AsyncMock(spec=aioredis.Redis)
-        REDIS_CLIENT.get.return_value = None
-        REDIS_CLIENT.set.return_value = None
-        REDIS_CLIENT.delete.return_value = None
-
-except ImportError:
-    st.session_state.redis_status = f"Using Mock Redis (redis.asyncio not installed)."
-    REDIS_CLIENT = mock.AsyncMock(spec=aioredis.Redis)
-    REDIS_CLIENT.get.return_value = None
-    REDIS_CLIENT.set.return_value = None
-    REDIS_CLIENT.delete.return_value = None
-except Exception as e:
-    st.session_state.redis_status = f"Using Mock Redis (Real Redis unavailable - {e})."
-    REDIS_CLIENT = mock.AsyncMock(spec=aioredis.Redis)
-    REDIS_CLIENT.get.return_value = None
-    REDIS_CLIENT.set.return_value = None
-    REDIS_CLIENT.delete.return_value = None
+async def init_db():
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 ```
+*   `create_async_engine`: Initializes the asynchronous database engine. `pool_size` (10) sets the number of connections to keep open in the pool, and `max_overflow` (20) allows the pool to temporarily create more connections beyond `pool_size` to handle peak loads, up to `pool_size + max_overflow` connections.
+*   `AsyncSessionLocal`: A session factory that creates `AsyncSession` objects, which are the primary interface for interacting with the database using SQLAlchemy's ORM in an async context.
+*   `get_session`: An asynchronous context manager that provides a database session. It ensures that the session is properly closed after use, releasing the connection back to the pool.
+*   `init_db`: A function that creates all defined tables in the database.
 
-The `get_db_session` asynchronous generator is a crucial part of the database interaction, providing a session managed by a context manager. This function is then patched into `source.get_session_patchable` to ensure all internal database operations within `source.py` use this Streamlit-managed session. This is a common pattern when integrating async database logic with a synchronous framework like Streamlit.
+### Interactive Demonstration: Initialize Database
 
-## 1. Defining the Core Data Schema with SQLAlchemy 2.0
-Duration: 0:15
+Navigate to the "2. DB Connectivity & Pooling" section in the Streamlit application.
 
-Alex's first task is to define the data models for InnovateAI's AI assessment platform. This includes user profiles, assessment sessions, AI-R scores, and a mechanism for system events. SQLAlchemy 2.0's modern declarative mapping and type hints are used for clarity and robustness.
+1.  Click the **Initialize In-Memory SQLite Database & Create Sample Users** button.
+
+You will see success messages confirming that the database schema has been created and two sample users ("Alex Smith" and "Jane Doe") have been added. Their IDs will also be displayed. This action cleans up any prior data and ensures a fresh state for the codelab.
 
 <aside class="positive">
-<b>Best Practice:</b> Correctly structured data models are fundamental for reliable data storage, efficient querying, and understanding entity relationships. SQLAlchemy's ORM bridges Python objects and relational tables, ensuring type safety and reducing boilerplate.
-</aside>
-
-**Relational Algebra in Action:**
-The relationships between tables, such as `Users` and `Assessments`, imply join operations at the database level. SQLAlchemy relationships abstract this, making it object-oriented and intuitive in Python code.
-$$ \pi_{\text{Assessment.*}}(\text{Users} \bowtie_{\text{Users.id} = \text{Assessments.user\_id}} \text{Assessments}) $$
-This formula shows projecting all columns from `Assessment` after joining `Users` and `Assessments` tables on their respective `id` and `user_id` columns.
-
-**SQLAlchemy Models Overview (from `source.py`):**
-
-*   **User Model**: Represents user profiles.
-    ```python
-    class User(Base, TimestampMixin):
-        __tablename__ = "users"
-        id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-        email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-        name: Mapped[str] = mapped_column(String(255))
-        occupation_code: Mapped[Optional[str]] = mapped_column(String(20))
-        education_level: Mapped[Optional[str]] = mapped_column(String(50))
-        years_experience: Mapped[Optional[float]] = mapped_column(Float)
-        assessments: Mapped[List["Assessment"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-        scores: Mapped[List["AIRScore"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    ```
-    This model defines a `User` with basic information and **one-to-many relationships** with `Assessment` and `AIRScore` records, enabling related data to be accessed directly from a `User` object.
-
-*   **Assessment Model**: Tracks user's evaluation sessions.
-    ```python
-    class Assessment(Base, TimestampMixin):
-        __tablename__ = "assessments"
-        id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-        user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-        status: Mapped[str] = mapped_column(String(20), default="in_progress")
-        component: Mapped[str] = mapped_column(String(50))
-        current_ability: Mapped[float] = mapped_column(Float, default=0.0)
-        items_administered: Mapped[int] = mapped_column(default=0)
-        user: Mapped["User"] = relationship(back_populates="assessments")
-    ```
-    An `Assessment` belongs to a `User` via the `user_id` foreign key.
-
-*   **AIRScore Model**: Stores AI-generated assessment results.
-    ```python
-    class AIRScore(Base, TimestampMixin):
-        __tablename__ = "air_scores"
-        id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-        user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-        occupation_code: Mapped[str] = mapped_column(String(20))
-        air_score: Mapped[float] = mapped_column(Float)
-        vr_score: Mapped[float] = mapped_column(Float)
-        hr_score: Mapped[float] = mapped_column(Float)
-        synergy_score: Mapped[float] = mapped_column(Float)
-        ci_lower: Mapped[float] = mapped_column(Float)
-        ci_upper: Mapped[float] = mapped_column(Float)
-        parameter_version: Mapped[str] = mapped_column(String(20))
-        calculation_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
-        user: Mapped["User"] = relationship(back_populates="scores")
-    ```
-    An `AIRScore` is also linked to a `User` and includes various scores and metadata stored as JSON.
-
-*   **DomainEvent Model**: Used for reliable event communication (Outbox Pattern).
-    ```python
-    class DomainEvent(Base, TimestampMixin):
-        __tablename__ = "domain_events"
-        id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-        event_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-        aggregate_type: Mapped[str] = mapped_column(String(100), nullable=False)
-        aggregate_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-        payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
-        status: Mapped[str] = mapped_column(String(20), default="pending")
-        published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-        __table_args__ = (Index('ix_events_status_created', 'status', 'created_at'),)
-    ```
-    This model captures critical events with their type, associated aggregate, payload, and publication status.
-
-**Interactive Model Demonstration: Create a New User**
-In the Streamlit application, navigate to **"1. Data Models"**. You'll find a form to create a new user. This demonstrates how the `UserRepository` (which we'll cover later) interacts with the `User` model to persist data.
-
-1.  Enter an `email` (e.g., `developer@example.com`) and `name` (e.g., `Developer User`).
-2.  Click **"Create User"**.
-
-You should see a success message with the newly created user's ID. This confirms the basic data persistence works.
-
-## 2. Asynchronous Database Connectivity and Connection Pooling
-Duration: 0:10
-
-InnovateAI's platform demands high concurrency without blocking, so Alex employs asynchronous database operations with SQLAlchemy 2.0 and the `asyncpg` driver. He also configures connection pooling to efficiently manage database resources. This setup is critical for maximizing throughput and responsiveness.
-
-<aside class="negative">
-<b>Warning:</b> Without asynchronous programming, I/O-bound operations like database calls can block your application, leading to poor performance under load. Connection pooling is essential to avoid the overhead of establishing new connections for every request.
-</aside>
-
-**Throughput Optimization:**
-Asynchronous I/O aims to maximize throughput ($\Theta$), which is the number of requests processed per unit of time, by minimizing idle CPU time during I/O waits.
-$$ \Theta = \frac{\text{Number of requests}}{\text{Total time}} $$
-
-**Architecture for Async DB Access:**
-```
-+-+       +-+       +--+       +--+
-| Streamlit App  | -> |  get_db_session   | -> | AsyncSessionLocal  | -> |  SQLAlchemy     |
-| (app.py)       |       |  (context manager)|       | (session factory)  |       |  Async Engine   |
-+-+       +-+       +--+       |  (asyncpg driver)|
-                                                                                    +--+--+
-                                                                                             |
-                                                                                             v
-                                                                                    +--+
-                                                                                    |   PostgreSQL    |
-                                                                                    |   (Database)    |
-                                                                                    +--+
-```
-The `get_db_session` context manager provides an `AsyncSession` from `AsyncSessionLocal`, which in turn uses SQLAlchemy's `async_engine` (configured with `asyncpg`) to interact with the PostgreSQL database.
-
-**Interactive Database Initialization:**
-Navigate to **"2. DB Connectivity & Pooling"** in the Streamlit app.
-
-1.  Click **"Initialize In-Memory SQLite Database & Create Sample Users"**.
-2.  Observe the success messages, confirming that an in-memory SQLite database (for demonstration) has been initialized and two sample users (Alex Smith and Jane Doe) have been created. Their IDs will be displayed.
-
-<aside class="positive">
-In a production environment, `async_engine` would typically connect to a persistent PostgreSQL database using a URL like `postgresql+asyncpg://user:password@host:port/dbname`. For this codelab, an in-memory SQLite database (`sqlite+aiosqlite:///file::memory:?cache=shared`) is used for ease of setup.
+A common pitfall is to forget to `await` asynchronous database calls. SQLAlchemy's async ORM heavily relies on `await` for all database interactions (e.g., `session.execute`, `session.commit`).
 </aside>
 
 ## 3. Implementing the Repository Pattern and Solving N+1 Queries
-Duration: 0:20
+Duration: 10:00
 
-To maintain a clean architecture and facilitate testing, Alex implements the Repository Pattern, abstracting database operations from the service layer. He also addresses a common performance pitfall: the N+1 query problem, which occurs when fetching a collection of parent objects (e.g., users) and then, for each parent, executing a separate query to fetch its child objects (e.g., scores).
+To maintain a clean architecture and facilitate easier testing, Alex implements the Repository Pattern, abstracting database operations from the service layer. He also anticipates a common performance pitfall: the N+1 query problem, which arises when fetching a collection of parent objects and then, for each parent, executing a separate query to fetch its child objects. This can drastically degrade performance, especially when dealing with many related records. Alex addresses this with SQLAlchemy's eager loading techniques.
 
-**Repository Pattern Benefits:**
-*   **Decoupling**: Business logic remains unaware of the underlying data persistence mechanisms.
-*   **Testability**: Repositories can be easily mocked for unit testing.
-*   **Maintainability**: Changes in the ORM or database schema are localized to the repository.
+The Repository Pattern centralizes data access logic, making it easier to manage, test, and potentially swap out ORM or database technologies in the future. The N+1 query problem occurs when loading $ N $ parent objects (e.g., users) and then subsequently executing $ N $ additional queries to fetch their related child objects (e.g., scores), resulting in $ N+1 $ queries in total. This is highly inefficient. Eager loading techniques like `selectinload` reduce this to $ 1 $ or $ 2 $ queries, improving performance significantly.
 
-**The N+1 Query Problem:**
-The N+1 query problem happens when loading $N$ parent objects results in $N$ additional queries to fetch their children, plus the initial query for the parents, totaling $N+1$ queries. Eager loading techniques, such as SQLAlchemy's `selectinload` or `joinedload`, are used to fetch related data in a single or a few optimized queries, significantly reducing database round trips.
+### Repository Pattern Diagram
 
-**Architecture with Repository Pattern:**
+```mermaid
+graph TD
+    A[Service Layer] --> B(UserRepository)
+    A --> C(AIRScoreRepository)
+    A --> D(DomainEventRepository)
+
+    B --> E[SQLAlchemy Session]
+    C --> E
+    D --> E
+
+    E --> F[Database]
+
+    subgraph Repositories
+        B
+        C
+        D
+    end
 ```
-+-+       +--+       +--+       +--+
-| Streamlit App  | -> |   Service Layer    | -> |  Repository     | -> |  SQLAlchemy     |
-| (UI)           |       | (Business Logic)   |       | (Data Access)   |       |  ORM (Models)   |
-+-+       +--+       +--+       +--+--+
-                                                                                           |
-                                                                                           v
-                                                                                    +--+
-                                                                                    |    Database     |
-                                                                                    +--+
-```
+This diagram illustrates how the Service Layer interacts with specific Repositories (e.g., `UserRepository`) which, in turn, use the SQLAlchemy Session to communicate with the database. This abstraction decouples business logic from data access details.
 
-**Interactive Demonstration: N+1 vs. Eager Loading**
-Navigate to **"3. Repository Pattern & N+1"**.
+### Repository Implementations
 
-First, let's ensure there are some scores to fetch.
-1.  Enter `Alex's User ID` (obtained from the previous step) into the "User ID to add scores for" input.
-2.  Click **"Add 3 Sample Scores for User"**. This will create multiple `AIRScore` records linked to Alex.
+Alex creates a `BaseRepository` for common operations and specialized repositories for each model:
 
-Now, let's compare fetching methods:
-1.  Enter a `User ID` (e.g., Alex's ID or any other created user's ID) into "User ID to fetch".
-2.  Click **"Fetch User & Scores (Simulated N+1)"**.
-    *   This button uses the `UserRepository.get_by_id` method. If relationships are configured for lazy loading (default in many ORMs if not specified), accessing `user.scores` after fetching `user` will trigger an additional query *for each* user to load their scores. In our async setup, we explicitly fetch scores, but the principle of multiple round-trips remains.
-    *   Observe the "Time taken" and the output. Imagine this scaled to hundreds of users – the performance cost would be significant.
-3.  Click **"Fetch User & Scores (Eager Loading)"**.
-    *   This button uses the `UserRepository.get_user_with_scores_eager` method, which internally uses `selectinload(User.scores)` to fetch the user and all their associated scores in a single optimized query.
-    *   Observe the "Time taken". You should see a noticeable improvement in performance compared to the simulated N+1 approach, especially if there were many scores.
-
-The `get_user_with_scores_eager` implementation in `source.py` would look something like this:
 ```python
-# In source.py within UserRepository
-from sqlalchemy.orm import selectinload
-
-class UserRepository:
+class BaseRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    async def create(self, model_instance: Base):
+        self.session.add(model_instance)
+        await self.session.flush()
+        return model_instance
+
+    async def get_by_id(self, model_id: str, model_class: type[Base]):
+        result = await self.session.execute(
+            select(model_class).filter_by(id=model_id)
+        )
+        return result.scalars().first()
+
+class UserRepository(BaseRepository):
+    # ... (other methods) ...
     async def get_user_with_scores_eager(self, user_id: str) -> Optional[User]:
-        stmt = select(User).options(selectinload(User.scores)).where(User.id == user_id)
-        result = await self.session.execute(stmt)
+        # Corrected to use selectinload for eager loading of collections
+        result = await self.session.execute(
+            select(User).filter_by(id=user_id).options(selectinload(User.scores))
+        )
+        return result.scalars().unique().first()
+
+    async def get_latest_score(self, user_id: str) -> Optional[AIRScore]:
+        result = await self.session.execute(
+            select(AIRScore).filter_by(user_id=user_id).order_by(AIRScore.created_at.desc()).limit(1)
+        )
         return result.scalars().first()
 ```
+The `get_user_with_scores_eager` method is key here. By using `options(selectinload(User.scores))`, SQLAlchemy knows to fetch the related `AIRScore` objects for the user in an optimized way (typically one additional query), avoiding the N+1 problem.
+
+### Interactive Demonstration: N+1 vs. Eager Loading
+
+Navigate to the "3. Repository Pattern & N+1" section in the Streamlit application.
+
+1.  First, ensure you have sample scores for a user. If not, enter Alex's User ID (obtained from the previous step, e.g., `st.session_state.user_alex_id`) into the "User ID to add scores for" input and click **Add 3 Sample Scores for User**.
+2.  Now, in the "Demonstrating N+1 vs. Eager Loading" section, enter the same User ID in the "User ID to fetch" input.
+3.  Click **Fetch User & Scores (Simulated N+1)**. Observe the time taken. Internally, SQLAlchemy's lazy loading will cause separate queries for each score, simulating the N+1 problem.
+4.  Click **Fetch User & Scores (Eager Loading)**. Observe the time taken. This uses `selectinload` to fetch the user and all their scores in a more efficient manner.
+
+You should notice that the "Eager Loading" approach is significantly faster because it performs fewer database queries. This highlights the importance of using eager loading for relationships that are frequently accessed together.
+
+By implementing `UserRepository`, Alex has created a clean boundary between the business logic and data access. The `get_user_with_scores_eager` method, utilizing `selectinload(User.scores)`, directly addresses the N+1 query problem by fetching related `AIRScore` objects in a minimal number of queries. This significantly reduces database load and improves response times, as observed by the difference in execution times.
 
 ## 4. Optimizing Data Access with Redis Caching Strategies
-Duration: 0:20
+Duration: 12:00
 
-InnovateAI's user profiles and their latest AI scores are frequently accessed. Alex implements a caching layer using Redis to offload the primary database, employing a **read-through caching strategy**. This means the application first checks the cache; if data is found (a cache hit), it's returned immediately. If not (a cache miss), the data is fetched from the database, returned to the application, and then stored in the cache for future requests.
+InnovateAI's user profiles and their latest AI scores are frequently accessed, especially during the initial loading of the user dashboard. To offload the primary PostgreSQL database and accelerate response times for these hot data points, Alex decides to implement a caching layer using Redis. He considers a read-through caching strategy, where data is fetched from the cache if available, otherwise from the database and then stored in the cache for subsequent requests.
 
-<aside class="positive">
-<b>Why Redis?</b> Redis is an extremely fast, in-memory data store that can significantly reduce database load and improve response times for frequently accessed data.
+Caching is critical for high-performance applications, reducing latency and database load by storing frequently accessed data in a fast, in-memory store like Redis. The read-through strategy is robust for frequently read, less frequently updated data. It simplifies cache management by encapsulating the cache-or-DB logic.
+
+### Caching Metrics
+
+*   **Cache Hit Ratio ($ H $)**: Measures the effectiveness of caching. A higher $ H $ indicates better cache performance.
+    $$ H = \frac{\text{Number of Cache Hits}}{\text{Total Number of Requests}} $$
+*   **Average Access Time ($ T_{\text{avg}} $)**: Represents the average time taken to retrieve data. A good caching strategy aims to minimize $ T_{\text{avg}} $.
+    $$ T_{\text{avg}} = H \times T_{\text{cache}} + (1-H) \times (T_{\text{cache}} + T_{\text{database}}) $$
+    where $ T_{\text{cache}} $ is cache access time and $ T_{\text{database}} $ is database access time.
+
+### Caching Flow Diagram
+
+```mermaid
+graph TD
+    A[Client Request Data] --> B{Data in Cache?}
+    B -- Yes --> C[Return Data from Cache]
+    B -- No --> D[Fetch Data from Database]
+    D --> E[Store Data in Cache]
+    E --> C
+```
+This diagram illustrates the read-through caching strategy. The client first checks the cache. If found (hit), data is returned quickly. If not found (miss), the data is retrieved from the database, stored in the cache, and then returned to the client.
+
+### Cached Repository Implementation
+
+Alex extends the `UserRepository` to include caching logic using Redis.
+
+```python
+import json
+import redis.asyncio as aioredis # Or unittest.mock for mock client
+
+class CachedUserRepository(UserRepository):
+    def __init__(self, session: AsyncSession, redis_client):
+        super().__init__(session)
+        self.redis_client = redis_client
+        self.USER_CACHE_PREFIX = "user:"
+        self.LATEST_SCORE_CACHE_PREFIX = "latest_airscore:"
+        self.CACHE_TTL = 3600  # 1 hour
+
+    async def _get_from_cache(self, key: str) -> Optional[Dict]:
+        data = await self.redis_client.get(key)
+        return json.loads(data) if data else None
+
+    async def _set_to_cache(self, key: str, data: Dict):
+        await self.redis_client.set(key, json.dumps(data), ex=self.CACHE_TTL)
+
+    async def get_by_id_cached(self, user_id: str) -> Optional[User]:
+        cache_key = f"{self.USER_CACHE_PREFIX}{user_id}"
+        cached_data = await self._get_from_cache(cache_key)
+        if cached_data:
+            # Reconstruct User from dict
+            # ... (datetime conversion logic) ...
+            return User(**cached_data) 
+        
+        user = await super().get_by_id(user_id)
+        if user:
+            await self._set_to_cache(cache_key, user.to_dict())
+        return user
+
+    async def get_latest_score_cached(self, user_id: str) -> Optional[AIRScore]:
+        cache_key = f"{self.LATEST_SCORE_CACHE_PREFIX}{user_id}"
+        cached_data = await self._get_from_cache(cache_key)
+        if cached_data:
+            # Reconstruct AIRScore from dict
+            # ... (datetime conversion logic) ...
+            return AIRScore(**cached_data)
+
+        score = await super().get_latest_score(user_id)
+        if score:
+            await self._set_to_cache(cache_key, score.to_dict())
+        return score
+
+    async def invalidate_user_cache(self, user_id: str):
+        await self.redis_client.delete(f"{self.USER_CACHE_PREFIX}{user_id}")
+        await self.redis_client.delete(f"{self.LATEST_SCORE_CACHE_PREFIX}{user_id}")
+```
+*   `_get_from_cache` and `_set_to_cache`: Handle serialization/deserialization of data to/from Redis.
+*   `get_by_id_cached` and `get_latest_score_cached`: Implement the read-through logic: check cache first, then DB, then populate cache.
+*   `invalidate_user_cache`: Crucial for cache consistency. When underlying data changes, stale cache entries must be removed.
+
+### Interactive Demonstration: Caching
+
+Navigate to the "4. Caching with Redis" section in the Streamlit application.
+
+1.  The application will automatically prepare a "Cache Demo User" and their latest score.
+2.  Click **Fetch User (Cached)** for the first time. This will be a cache miss (slower).
+3.  Click **Fetch User (Cached)** again. This will be a cache hit (faster).
+4.  Repeat for **Fetch Latest AIRScore (Cached)**.
+5.  Observe the "Cache Metrics" at the bottom to see how hit/miss counts change.
+6.  Click **Invalidate Cache for this User**. This clears the user's data from Redis.
+7.  Now, try fetching the user or score again. The first attempt will be a cache miss.
+
+<aside class="negative">
+If your local Redis server is not running, the application will automatically fall back to a mock Redis client. While this allows the app to function, you won't observe actual performance differences from a real Redis cache. To experience the full benefit, ensure Redis is installed and running (`redis-server`).
 </aside>
 
-**Cache Hit Rate and Average Access Time:**
-The effectiveness of a cache is measured by its hit rate ($H$) and its impact on average access time ($T_{\text{avg}}$).
-$$ H = \frac{\text{Number of Cache Hits}}{\text{Total Number of Requests}} $$
-$$ T_{\text{avg}} = H \times T_{\text{cache}} + (1-H) \times (T_{\text{cache}} + T_{\text{database}}) $$
-Where $T_{\text{cache}}$ is the time to retrieve from cache, and $T_{\text{database}}$ is the time to retrieve from the database. A higher hit rate means faster average access times.
-
-**Caching Architecture:**
-```
-+-+       +-+       +--+       +--+
-| Streamlit App  | -> | CachedRepository  | -> |    Redis Cache  | -> |  SQLAlchemy ORM |
-| (UI)           |       | (reads from cache |       | (fast access)   |       | (fallback to DB)|
-|                |       |  or DB)           |       |                 |       |                 |
-+-+       +-+       +--+       +--+--+
-                                                                                           |
-                                                                                           v
-                                                                                    +--+
-                                                                                    |    Database     |
-                                                                                    +--+
-```
-The `CachedUserRepository` first attempts to fetch data from Redis. If it's a miss, it fetches from the database via the `UserRepository` and then stores the data in Redis before returning it.
-
-**Interactive Caching Demonstration:**
-Navigate to **"4. Caching with Redis"**. A dedicated "Cache Demo User" will be created automatically if not already present, along with a sample AIRScore for them.
-1.  Note the **User ID** displayed for the caching demo.
-2.  Click **"Fetch User (Cached)"** for the first time.
-    *   This will be a **cache miss**. The data is fetched from the database, displayed, and then stored in Redis. Observe the "Time taken."
-3.  Click **"Fetch User (Cached)"** again.
-    *   This should now be a **cache hit**. The data is retrieved directly from Redis. You should notice a significantly faster "Time taken."
-4.  Repeat the process with **"Fetch Latest AIRScore (Cached)"** to observe caching for scores.
-
-**Cache Invalidation:**
-Caching is great for performance, but stale data can be a problem. Cache invalidation ensures that when data changes in the database, the cached version is removed or updated.
-1.  Click **"Invalidate Cache for this User"**. This will delete the user's data from Redis.
-2.  Now, if you click **"Fetch User (Cached)"** again, it will be a cache miss, as the cache was invalidated.
-
-The `invalidate_user_cache` method in `CachedUserRepository` would typically use `REDIS_CLIENT.delete()` on the specific cache keys.
-
-**Cache Metrics (Simulated/Mock):**
-The application displays "Mock/Simulated Cache Hits" and "Mock/Simulated Cache Misses". While a real Redis client doesn't directly expose these counters in this manner, the `CachedUserRepository` internally tracks them for this demonstration.
+Alex's implementation of `CachedUserRepository` successfully demonstrates a read-through caching strategy. The first request will typically result in a 'Cache MISS' (fetching from DB), and subsequent requests for the same data show a 'Cache HIT' (retrieving directly from Redis). The `invalidate_user_cache` method ensures data consistency by clearing stale cache entries after updates. This optimizes data access for read-heavy operations, improving the user experience.
 
 ## 5. Building a Reliable Eventing System with the Outbox Pattern
-Duration: 0:20
+Duration: 15:00
 
-Alex ensures critical domain events are reliably published using the **Outbox Pattern**. This pattern guarantees **atomicity**: a business operation (e.g., creating an `AIRScore`) and the recording of its corresponding domain event happen within a single database transaction. This prevents scenarios where a business operation succeeds but its event fails to be recorded, or vice-versa, which could lead to data inconsistencies in a distributed system.
+Alex is tasked with ensuring that critical domain events (like an `AIRScore` being calculated or an `Assessment` completing) are reliably published to other microservices within InnovateAI, even in the face of temporary network issues or consumer downtime. He implements the Outbox Pattern, using the `DomainEvent` table as a robust buffer. This pattern is vital for ensuring that services remain loosely coupled and that event-driven architectures maintain data consistency.
 
-<aside class="positive">
-<b>Key Benefit:</b> The Outbox Pattern provides transactional consistency for event publishing, making it ideal for microservices architectures where reliable communication is paramount.
-</aside>
+In distributed systems, reliable communication between services is paramount. The Outbox Pattern ensures atomicity: a business operation and the recording of its corresponding domain event happen within a single database transaction. This guarantees that events are never lost if the publishing mechanism fails after the business operation succeeds but before the event is sent to the message broker. It leverages the ACID properties of the database.
 
-**Outbox Pattern Architecture:**
+The Outbox Pattern helps achieve **eventual consistency**. In a distributed system, data might not be immediately consistent across all services, but it will eventually converge. By guaranteeing events are eventually delivered, the Outbox pattern facilitates this convergence without requiring a complex two-phase commit protocol across services.
+
+### Outbox Pattern Flowchart
+
+```mermaid
+graph TD
+    A[Service performs Business Logic] --> B{Start DB Transaction}
+    B --> C[Update Business Data in DB]
+    C --> D[Insert DomainEvent into Outbox Table (status=pending)]
+    D --> E{Commit DB Transaction}
+    E -- Success --> F[Event Publisher polls Outbox]
+    F --> G{Retrieve Pending Events}
+    G -- Events Found --> H[Publish Events to Message Broker]
+    H --> I[Mark Events as Published in DB]
+    I --> J{Commit DB Transaction (for status update)}
+    G -- No Events --> F
+    E -- Failure --> K[Rollback DB Transaction]
+    K --> A
 ```
-++     +-+     ++     +-+
-| Business Logic   |->|  Database Transaction         |->|   DomainEvent    |->|   Event Publisher |
-| (e.g., create AIRScore)| |  (DB update + Event insert) |     |  Table           |     |  (polls DB,       |
-++     |                               |     |  (Outbox)        |     |   publishes to    |
-                         +-+     +--++     |   Redis Pub/Sub)  |
-                                                                         |                +--+-+
-                                                                         |                         |
-                                                                         v                         v
-                                                              ++     +--+
-                                                              |  Main Business Data |     |  Redis Pub/Sub  |
-                                                              |  (e.g., AIRScore)   |     |  Channel        |
-                                                              ++     +--+
-```
-1.  **Transactional Write**: The business operation (e.g., saving an `AIRScore`) and inserting a `DomainEvent` into an "outbox" table (our `DomainEvent` model) occur within the same database transaction.
-2.  **Event Publisher**: A separate, asynchronous process (the "Event Publisher") periodically polls the `DomainEvent` table for events with a "pending" status.
-3.  **Publish and Mark**: When pending events are found, the publisher retrieves them, publishes them to a message broker (like Redis Pub/Sub), and then updates their status to "published" in the database, all within its own transaction.
+This flowchart illustrates the Outbox Pattern. The key is that steps C and D happen within a single database transaction. If the transaction commits, both business data and the event record are persisted. An independent "Event Publisher" then reads pending events from the Outbox table and publishes them, marking them as `published` in another transaction.
 
-**Interactive Eventing Demonstration:**
-Navigate to **"5. Eventing (Outbox Pattern)"**. An "Event Demo User" will be created automatically.
-1.  Note the **User ID** displayed for the eventing demo.
-2.  Click **"Calculate & Store AIRScore (Creates Pending Event)"**.
-    *   This will create a new `AIRScore` for the demo user and, critically, insert a new `DomainEvent` into the `domain_events` table with a `status` of 'pending'. You will see a success message indicating both the score and event creation.
-3.  Scroll down to **"Current Event Status"**. You should see the newly created event listed under **"Pending Events (Awaiting Publication)"**.
+### Domain Event Repository and Event Creation
 
-**Running the Event Publisher:**
-1.  Click **"Run Event Publisher (Simulate Background)"**.
-    *   This button simulates a background process that polls the `DomainEvent` table. It will run for a few cycles, fetching pending events, simulating their processing, and then marking them as `published`.
-    *   Observe the progress bar and status updates.
-2.  Once the simulation finishes, the application will automatically rerun. The event you just created should now move from **"Pending Events"** to **"Published Events"**.
-3.  You can click **"Refresh Event Status Now"** at any time to manually update the display.
+The `DomainEventRepository` manages events, allowing retrieval of pending events and marking them as published. The `calculate_and_store_airscore` function demonstrates how a business operation and event creation are bundled into one transaction.
 
-The `calculate_and_store_airscore` function in `source.py` exemplifies the transactional atomicity:
 ```python
-# In source.py
-async def calculate_and_store_airscore(user_id: str, occupation: str) -> Tuple[AIRScore, DomainEvent]:
-    async for session in get_session_patchable(): # Uses the patched session
-        # 1. Perform business operation
-        new_score = AIRScore(
-            user_id=user_id,
-            occupation_code=occupation,
-            air_score=random.uniform(60.0, 95.0),
-            vr_score=random.uniform(50.0, 90.0),
-            hr_score=random.uniform(40.0, 85.0),
-            synergy_score=random.uniform(70.0, 99.0),
-            ci_lower=random.uniform(55.0, 75.0),
-            ci_upper=random.uniform(80.0, 98.0),
-            parameter_version="v1.2",
-            calculation_metadata={"model_version": "GPT-4o", "analysis_date": datetime.now().isoformat()}
-        )
-        session.add(new_score)
-        await session.flush() # Flush to get new_score.id
+class DomainEventRepository(BaseRepository):
+    # ... (init and get_by_id) ...
 
-        # 2. Record domain event in the same transaction
+    async def get_pending_events(self, limit: int = 10) -> List[DomainEvent]:
+        result = await self.session.execute(
+            select(DomainEvent).filter_by(status="pending").order_by(DomainEvent.created_at).limit(limit)
+        )
+        return result.scalars().all()
+
+    async def mark_as_published(self, event_ids: List[str]):
+        for event_id in event_ids:
+            event = await self.session.execute(select(DomainEvent).filter_by(id=event_id)).scalars().first()
+            if event:
+                event.status = "published"
+                event.published_at = datetime.utcnow()
+                self.session.add(event)
+        await self.session.commit() # Commit all status updates in one go
+
+async def calculate_and_store_airscore(user_id: str, occupation_code: str) -> tuple[AIRScore, DomainEvent]:
+    async for session in get_session():
+        # Create AIRScore
+        score = AIRScore( # ... score details ... )
+        session.add(score)
+        
+        # Create DomainEvent within the same session/transaction
+        await session.flush()  # Ensure score has an ID before event payload
         event_payload = {
             "user_id": user_id,
-            "air_score_id": new_score.id,
-            "air_score_value": new_score.air_score,
-            "occupation": occupation,
+            "air_score_id": score.id,
+            "occupation_code": score.occupation_code,
+            "air_score_value": score.air_score
         }
-        domain_event = DomainEvent(
+        event = DomainEvent(
             event_type="AIRScoreCalculated",
             aggregate_type="AIRScore",
-            aggregate_id=new_score.id,
+            aggregate_id=score.id,
             payload=event_payload,
             status="pending"
         )
-        session.add(domain_event)
-
-        await session.commit() # Both operations committed atomically
-        await session.refresh(new_score)
-        await session.refresh(domain_event)
-        return new_score, domain_event
+        session.add(event)
+        
+        await session.commit() # Atomic commit for both score and event
+        await session.refresh(score)
+        await session.refresh(event)
+        return score, event
 ```
-Notice `await session.commit()` ensures both the `AIRScore` and `DomainEvent` are saved or rolled back together.
+*   `calculate_and_store_airscore`: This function is critical. It creates both the `AIRScore` and a `DomainEvent` within a single `AsyncSession` and `await session.commit()`. This guarantees atomicity. If the score is saved, the event is also saved, or neither is.
+*   `get_pending_events`: Used by the simulated event publisher to find events that need to be sent.
+*   `mark_as_published`: Updates the status of events after they have been "published" (simulated here), preventing them from being processed again.
 
-## Conclusion
-Duration: 0:05
+### Interactive Demonstration: Outbox Pattern
 
-Congratulations! You have successfully explored the fundamental aspects of designing a robust and scalable data architecture for an AI-powered platform. Through this codelab, you've gained practical experience with:
+Navigate to the "5. Eventing (Outbox Pattern)" section in the Streamlit application.
 
-*   **SQLAlchemy 2.0 Models**: Defining complex relationships and structuring data effectively.
-*   **Asynchronous Database Operations**: Implementing non-blocking data access for high performance.
-*   **Repository Pattern**: Abstracting data access for clean architecture and improved testability.
-*   **N+1 Query Resolution**: Optimizing queries with eager loading to prevent performance bottlenecks.
-*   **Redis Caching**: Utilizing an in-memory store for faster data retrieval and reduced database load.
-*   **Outbox Pattern**: Ensuring transactional consistency for reliable event publishing in distributed systems.
+1.  The application will prepare an "Event Demo User".
+2.  Click **Calculate & Store AIRScore (Creates Pending Event)**. This will create a new AIRScore and a `DomainEvent` marked as `pending` in the database.
+3.  Observe the "Pending Events" table below. You should see the newly created event.
+4.  Click **Start Event Publisher (Background)**. This simulates a background service that polls for pending events, marks them as published, and moves them to the "Published Events" table.
+5.  Wait for the publisher to run for a few cycles (it's set to 3 cycles in the demo for brevity). You'll see messages indicating publisher activity.
+6.  Click **Refresh Event Status Now** to manually update the event tables. Observe the event moving from "Pending Events" to "Published Events".
+7.  You can click **Calculate & Store AIRScore (Creates Pending Event)** multiple times and restart the publisher to see more events being processed.
+8.  If the publisher is running, you can click **Stop Event Publisher** to signal it to stop processing after its current cycle.
 
-These patterns and tools are critical for building modern, high-performance, and resilient backend services, especially in dynamic and data-intensive environments like those found in AI and machine learning applications. By applying these concepts, developers like Alex can build powerful and maintainable systems that scale with business needs.
+Alex's implementation clearly demonstrates the Outbox Pattern. When `calculate_and_store_airscore` is called, both the `AIRScore` record and the `DomainEvent` are created within a single database transaction, guaranteeing atomicity. The `DomainEvent` is initially marked `pending`.
 
-Keep experimenting with these concepts and consider how they can be applied to your own projects. Happy coding!
+The simulated `event_publisher` then periodically polls the `domain_events` table for `pending` events. Upon finding them, it simulates publishing them and then updates their status to `published` in the database. This two-phase commit strategy ensures no event is ever lost, even if an external message broker is temporarily unavailable. Alex can verify this process by observing the status transitions.
