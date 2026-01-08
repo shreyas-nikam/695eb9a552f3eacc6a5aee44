@@ -16,32 +16,54 @@ import sys
 import json  # For Redis serialization
 import random  # For sample scores
 
+# Helper function to run async code in Streamlit
+
+
+def run_async(coro):
+    """Helper to run async code in Streamlit without closing the event loop."""
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
+
+
 # --- Configuration ---
 # FIX: Changed DATABASE_URL back to "sqlite+aiosqlite" as create_async_engine requires an async driver.
 # The "aiosqlite" driver (from the 'aiosqlite' package) is necessary for SQLAlchemy's asyncio extension
 # to work with SQLite. The previous change to "sqlite" caused 'pysqlite' (a synchronous driver) to be used,
 # leading to "InvalidRequestError: The asyncio extension requires an async driver to be used."
 # Ensure 'aiosqlite' is installed (e.g., `pip install aiosqlite`).
-DATABASE_URL = "sqlite+aiosqlite:///./test.db" # In-memory SQLite for demonstration, usually PostgreSQL
+# In-memory SQLite for demonstration, usually PostgreSQL
+DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 
 # --- SQLAlchemy Base and Mixins ---
 Base = declarative_base()
 
+
 class TimestampMixin:
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 # --- Models ---
+
+
 class User(Base, TimestampMixin):
     __tablename__ = "users"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     occupation_code: Mapped[Optional[str]] = mapped_column(String(20))
     education_level: Mapped[Optional[str]] = mapped_column(String(50))
     years_experience: Mapped[Optional[float]] = mapped_column(Float)
-    assessments: Mapped[List["Assessment"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="selectin")
-    scores: Mapped[List["AIRScore"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="selectin")
+    assessments: Mapped[List["Assessment"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", lazy="selectin")
+    scores: Mapped[List["AIRScore"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", lazy="selectin")
 
     def to_dict(self):
         return {
@@ -55,9 +77,11 @@ class User(Base, TimestampMixin):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
+
 class Assessment(Base, TimestampMixin):
     __tablename__ = "assessments"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     status: Mapped[str] = mapped_column(String(20), default="in_progress")
     component: Mapped[str] = mapped_column(String(50))
@@ -65,9 +89,11 @@ class Assessment(Base, TimestampMixin):
     items_administered: Mapped[int] = mapped_column(default=0)
     user: Mapped["User"] = relationship(back_populates="assessments")
 
+
 class AIRScore(Base, TimestampMixin):
     __tablename__ = "air_scores"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     occupation_code: Mapped[str] = mapped_column(String(20))
     air_score: Mapped[float] = mapped_column(Float)
@@ -97,28 +123,39 @@ class AIRScore(Base, TimestampMixin):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
+
 class DomainEvent(Base, TimestampMixin):
     __tablename__ = "domain_events"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    event_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_type: Mapped[str] = mapped_column(
+        String(100), nullable=False, index=True)
     aggregate_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    aggregate_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    aggregate_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, index=True)
     payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending")
-    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    __table_args__ = (Index('ix_events_status_created', 'status', 'created_at'),)
+    published_at: Mapped[Optional[datetime]
+                         ] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        Index('ix_events_status_created', 'status', 'created_at'),)
+
 
 # --- Database Engine and Session Setup ---
-async_engine = create_async_engine(DATABASE_URL, echo=False, future=True, pool_size=10, max_overflow=20)
+async_engine = create_async_engine(
+    DATABASE_URL, echo=False, future=True, pool_size=10, max_overflow=20)
 AsyncSessionLocal = sessionmaker(
     async_engine, expire_on_commit=False, class_=AsyncSession
 )
+
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
 
 # --- Repositories ---
+
+
 class BaseRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -134,10 +171,11 @@ class BaseRepository:
         )
         return result.scalars().first()
 
+
 class UserRepository(BaseRepository):
     def __init__(self, session: AsyncSession):
         super().__init__(session)
-    
+
     async def get_by_id(self, user_id: str) -> Optional[User]:
         return await super().get_by_id(user_id, User)
 
@@ -150,15 +188,18 @@ class UserRepository(BaseRepository):
     async def get_user_with_scores_eager(self, user_id: str) -> Optional[User]:
         # Corrected to use selectinload for eager loading of collections
         result = await self.session.execute(
-            select(User).filter_by(id=user_id).options(selectinload(User.scores))
+            select(User).filter_by(id=user_id).options(
+                selectinload(User.scores))
         )
         return result.scalars().unique().first()
 
     async def get_latest_score(self, user_id: str) -> Optional[AIRScore]:
         result = await self.session.execute(
-            select(AIRScore).filter_by(user_id=user_id).order_by(AIRScore.created_at.desc()).limit(1)
+            select(AIRScore).filter_by(user_id=user_id).order_by(
+                AIRScore.created_at.desc()).limit(1)
         )
         return result.scalars().first()
+
 
 class AIRScoreRepository(BaseRepository):
     def __init__(self, session: AsyncSession):
@@ -167,20 +208,23 @@ class AIRScoreRepository(BaseRepository):
     async def get_by_id(self, score_id: str) -> Optional[AIRScore]:
         return await super().get_by_id(score_id, AIRScore)
 
+
 class DomainEventRepository(BaseRepository):
     def __init__(self, session: AsyncSession):
         super().__init__(session)
 
     async def get_pending_events(self, limit: int = 10) -> List[DomainEvent]:
         result = await self.session.execute(
-            select(DomainEvent).filter_by(status="pending").order_by(DomainEvent.created_at).limit(limit)
+            select(DomainEvent).filter_by(status="pending").order_by(
+                DomainEvent.created_at).limit(limit)
         )
         return result.scalars().all()
 
     async def mark_as_published(self, event_ids: List[str]):
         # Operates on the session passed during initialization
         for event_id in event_ids:
-            event = await self.session.execute(select(DomainEvent).filter_by(id=event_id)).scalars().first()
+            result = await self.session.execute(select(DomainEvent).filter_by(id=event_id))
+            event = result.scalars().first()
             if event:
                 event.status = "published"
                 event.published_at = datetime.utcnow()
@@ -188,6 +232,8 @@ class DomainEventRepository(BaseRepository):
         await self.session.commit()
 
 # --- Caching with Redis ---
+
+
 class CachedUserRepository(UserRepository):
     def __init__(self, session: AsyncSession, redis_client):
         super().__init__(session)
@@ -209,11 +255,13 @@ class CachedUserRepository(UserRepository):
         if cached_data:
             # Reconstruct User from dict, handling datetime objects
             if 'created_at' in cached_data and cached_data['created_at']:
-                cached_data['created_at'] = datetime.fromisoformat(cached_data['created_at'])
+                cached_data['created_at'] = datetime.fromisoformat(
+                    cached_data['created_at'])
             if 'updated_at' in cached_data and cached_data['updated_at']:
-                cached_data['updated_at'] = datetime.fromisoformat(cached_data['updated_at'])
-            return User(**cached_data) 
-        
+                cached_data['updated_at'] = datetime.fromisoformat(
+                    cached_data['updated_at'])
+            return User(**cached_data)
+
         user = await super().get_by_id(user_id)
         if user:
             await self._set_to_cache(cache_key, user.to_dict())
@@ -225,9 +273,11 @@ class CachedUserRepository(UserRepository):
         if cached_data:
             # Reconstruct AIRScore from dict, handling datetime objects
             if 'created_at' in cached_data and cached_data['created_at']:
-                cached_data['created_at'] = datetime.fromisoformat(cached_data['created_at'])
+                cached_data['created_at'] = datetime.fromisoformat(
+                    cached_data['created_at'])
             if 'updated_at' in cached_data and cached_data['updated_at']:
-                cached_data['updated_at'] = datetime.fromisoformat(cached_data['updated_at'])
+                cached_data['updated_at'] = datetime.fromisoformat(
+                    cached_data['updated_at'])
             return AIRScore(**cached_data)
 
         score = await super().get_latest_score(user_id)
@@ -240,9 +290,12 @@ class CachedUserRepository(UserRepository):
         await self.redis_client.delete(f"{self.LATEST_SCORE_CACHE_PREFIX}{user_id}")
 
 # --- Helper functions ---
+
+
 async def init_db():
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
 
 async def run_db_setup_and_create_user():
     await init_db()
@@ -255,15 +308,18 @@ async def run_db_setup_and_create_user():
         await session.execute(text("DELETE FROM users"))
         await session.commit()
 
-        alex = User(email="alex.smith@innovateai.com", name="Alex Smith", occupation_code="SWE", education_level="Masters", years_experience=5.5)
-        jane = User(email="jane.doe@innovateai.com", name="Jane Doe", occupation_code="DS", education_level="PhD", years_experience=3.0)
-        
+        alex = User(email="alex.smith@innovateai.com", name="Alex Smith",
+                    occupation_code="SWE", education_level="Masters", years_experience=5.5)
+        jane = User(email="jane.doe@innovateai.com", name="Jane Doe",
+                    occupation_code="DS", education_level="PhD", years_experience=3.0)
+
         await user_repo.create(alex)
         await user_repo.create(jane)
         await session.commit()
         await session.refresh(alex)
         await session.refresh(jane)
         return alex, jane
+
 
 async def create_sample_airscore(user_id: str, occupation_code: str, session: AsyncSession) -> AIRScore:
     score = AIRScore(
@@ -276,12 +332,14 @@ async def create_sample_airscore(user_id: str, occupation_code: str, session: As
         ci_lower=float(f"{random.uniform(55, 75):.2f}"),
         ci_upper=float(f"{random.uniform(85, 99):.2f}"),
         parameter_version="v1.2.3",
-        calculation_metadata={"model": "deep-ai-v3", "date": datetime.now().isoformat()}
+        calculation_metadata={"model": "deep-ai-v3",
+                              "date": datetime.now().isoformat()}
     )
     session.add(score)
-    await session.commit() # Commit here for atomic score creation
+    await session.commit()  # Commit here for atomic score creation
     await session.refresh(score)
     return score
+
 
 async def calculate_and_store_airscore(user_id: str, occupation_code: str) -> tuple[AIRScore, DomainEvent]:
     async for session in get_session():
@@ -296,10 +354,11 @@ async def calculate_and_store_airscore(user_id: str, occupation_code: str) -> tu
             ci_lower=float(f"{random.uniform(55, 75):.2f}"),
             ci_upper=float(f"{random.uniform(85, 99):.2f}"),
             parameter_version="v1.2.3",
-            calculation_metadata={"model": "deep-ai-v3", "date": datetime.now().isoformat()}
+            calculation_metadata={"model": "deep-ai-v3",
+                                  "date": datetime.now().isoformat()}
         )
         session.add(score)
-        
+
         # Create DomainEvent
         await session.flush()  # Ensure score has an ID before event payload
         event_payload = {
@@ -316,14 +375,15 @@ async def calculate_and_store_airscore(user_id: str, occupation_code: str) -> tu
             status="pending"
         )
         session.add(event)
-        
+
         await session.commit()
         await session.refresh(score)
         await session.refresh(event)
         return score, event
 
 # Configure Page
-st.set_page_config(page_title="QuLab: Data Architecture & Persistence", layout="wide")
+st.set_page_config(
+    page_title="QuLab: Data Architecture & Persistence", layout="wide")
 st.sidebar.image("https://www.quantuniversity.com/assets/img/logo5.jpg")
 st.sidebar.divider()
 st.title("QuLab: Data Architecture & Persistence")
@@ -338,14 +398,15 @@ if "redis_status" not in st.session_state:
 try:
     import redis.asyncio as aioredis
     # Attempt to connect to local Redis
-    REDIS_CLIENT = aioredis.from_url("redis://localhost:6379/0", encoding="utf-8", decode_responses=True)
-    
+    REDIS_CLIENT = aioredis.from_url(
+        "redis://localhost:6379/0", encoding="utf-8", decode_responses=True)
+
     async def check_redis_connection():
         # Using a small timeout to avoid long waits if Redis is truly down
-        await asyncio.wait_for(REDIS_CLIENT.ping(), timeout=1) 
-    
+        await asyncio.wait_for(REDIS_CLIENT.ping(), timeout=1)
+
     try:
-        asyncio.run(check_redis_connection())
+        run_async(check_redis_connection())
         st.session_state.redis_status = "Connected to local Redis."
     except Exception:
         # If connection fails, fall through to mock client
@@ -355,13 +416,13 @@ try:
         REDIS_CLIENT.get.return_value = None
         REDIS_CLIENT.set.return_value = None
         REDIS_CLIENT.delete.return_value = None
-        
-except Exception as e: # Catch ModuleNotFoundError for aioredis or any other unexpected error
+
+except Exception as e:  # Catch ModuleNotFoundError for aioredis or any other unexpected error
     st.session_state.redis_status = f"Using Mock Redis Client (Redis module unavailable or failed to import)."
     # Ensure REDIS_CLIENT is always defined, even if aioredis itself can't be imported
     from unittest import mock
     # Use MagicMock as spec if aioredis.Redis is not available, this ensures the mock has basic async behavior
-    REDIS_CLIENT = mock.AsyncMock(spec=mock.MagicMock()) 
+    REDIS_CLIENT = mock.AsyncMock(spec=mock.MagicMock())
     REDIS_CLIENT.get.return_value = None
     REDIS_CLIENT.set.return_value = None
     REDIS_CLIENT.delete.return_value = None
@@ -412,7 +473,8 @@ options = [
 ]
 
 # Use index to set default selection
-current_index = options.index(st.session_state.current_page) if st.session_state.current_page in options else 0
+current_index = options.index(
+    st.session_state.current_page) if st.session_state.current_page in options else 0
 selected_page = st.sidebar.selectbox(
     "Navigate Sections",
     options,
@@ -427,7 +489,8 @@ st.sidebar.markdown(f"**Redis Status:** {st.session_state.redis_status}")
 if st.session_state.current_page == "Introduction":
     st.header("Introduction: Scaling the AI Backend's Data Layer")
 
-    st.markdown(f"**Persona:** Alex, Senior Software Engineer at InnovateAI Solutions.")
+    st.markdown(
+        f"**Persona:** Alex, Senior Software Engineer at InnovateAI Solutions.")
     st.markdown(f"**Organization:** InnovateAI Solutions is a cutting-edge company building an AI-powered assessment platform. This platform helps users evaluate their skills and receive AI-driven recommendations.")
 
     st.markdown(f"**The Challenge:** In Lab 1, Alex successfully laid the foundation for a scalable Python backend. Now, the focus shifts to the critical data layer. As InnovateAI's platform gains traction, Alex faces the challenge of designing and implementing a robust, performant, and reliable data architecture. This involves not only persisting complex AI-related data but also ensuring efficient access patterns, handling concurrent requests, and reliably communicating events across a growing microservices ecosystem. Alex needs to ensure the data layer can support high throughput, low latency, and maintain data integrity, all while being adaptable to future changes.")
@@ -435,14 +498,19 @@ if st.session_state.current_page == "Introduction":
     st.markdown(f"This application simulates Alex's workflow in tackling these challenges, demonstrating practical application of modern data persistence patterns using SQLAlchemy 2.0 and Redis.")
 
     st.subheader("Key Objectives")
-    st.markdown(f"- **Remember**: List SQLAlchemy relationship types and Redis data structures.")
-    st.markdown(f"- **Understand**: Explain async database patterns and connection pooling.")
-    st.markdown(f"- **Apply**: Implement repository pattern with SQLAlchemy 2.0.")
-    st.markdown(f"- **Analyze**: Compare caching strategies for different access patterns.")
+    st.markdown(
+        f"- **Remember**: List SQLAlchemy relationship types and Redis data structures.")
+    st.markdown(
+        f"- **Understand**: Explain async database patterns and connection pooling.")
+    st.markdown(
+        f"- **Apply**: Implement repository pattern with SQLAlchemy 2.0.")
+    st.markdown(
+        f"- **Analyze**: Compare caching strategies for different access patterns.")
     st.markdown(f"- **Create**: Design event tables for pub/sub architecture.")
 
     st.subheader("Tools Introduced")
-    st.markdown(f"- **PostgreSQL**: Primary database (ACID, JSON support, reliability)")
+    st.markdown(
+        f"- **PostgreSQL**: Primary database (ACID, JSON support, reliability)")
     st.markdown(f"- **SQLAlchemy 2.0**: ORM (Async support, type hints)")
     st.markdown(f"- **Alembic**: Migrations (Version control for schema)")
     st.markdown(f"- **Redis**: Cache + Pub/Sub (Speed, event distribution)")
@@ -465,8 +533,9 @@ elif st.session_state.current_page == "1. Data Models":
     st.markdown(r"$$ \pi $$ denotes projection and $$ \bowtie $$ denotes natural join. SQLAlchemy relationships abstract this, making it object-oriented and intuitive in Python code.")
 
     st.subheader("SQLAlchemy Models Overview")
-    st.markdown(f"Here's a glimpse into the SQLAlchemy model definitions Alex has created:")
-    
+    st.markdown(
+        f"Here's a glimpse into the SQLAlchemy model definitions Alex has created:")
+
     st.markdown(f"**User Model**: Represents user profiles.")
     st.code("""
 class User(Base, TimestampMixin):
@@ -512,7 +581,8 @@ class AIRScore(Base, TimestampMixin):
     user: Mapped["User"] = relationship(back_populates="scores")
     """, language="python")
 
-    st.markdown(f"**DomainEvent Model**: For reliable event communication (Outbox Pattern).")
+    st.markdown(
+        f"**DomainEvent Model**: For reliable event communication (Outbox Pattern).")
     st.code("""
 class DomainEvent(Base, TimestampMixin):
     __tablename__ = "domain_events"
@@ -532,10 +602,13 @@ class DomainEvent(Base, TimestampMixin):
         st.info("Please proceed to '2. DB Connectivity & Pooling' to initialize the database and create some sample users before interacting with models.")
     else:
         st.subheader("Interactive Model Demonstration: Create a New User")
-        st.markdown(f"Demonstrate how to create a new user and observe it being persisted.")
+        st.markdown(
+            f"Demonstrate how to create a new user and observe it being persisted.")
         with st.form("create_new_user_form"):
-            new_user_email = st.text_input("New User Email", key="new_user_email_input")
-            new_user_name = st.text_input("New User Name", key="new_user_name_input")
+            new_user_email = st.text_input(
+                "New User Email", key="new_user_email_input")
+            new_user_name = st.text_input(
+                "New User Name", key="new_user_name_input")
             submit_button = st.form_submit_button("Create User")
 
             if submit_button:
@@ -544,26 +617,32 @@ class DomainEvent(Base, TimestampMixin):
                         async def create_new_user_interaction():
                             async for session in get_session():
                                 repo = UserRepository(session)
-                                new_user_obj = User(email=new_user_email, name=new_user_name, occupation_code="TEST", education_level="Bachelors", years_experience=2.0)
+                                new_user_obj = User(email=new_user_email, name=new_user_name,
+                                                    occupation_code="TEST", education_level="Bachelors", years_experience=2.0)
                                 created_user = await repo.create(new_user_obj)
                                 await session.commit()
                                 await session.refresh(created_user)
                                 st.session_state.created_user_id = created_user.id
-                                st.success(f"User '{created_user.name}' created with ID: {created_user.id}")
-                        asyncio.run(create_new_user_interaction())
+                                st.success(
+                                    f"User '{created_user.name}' created with ID: {created_user.id}")
+                        run_async(create_new_user_interaction())
                     except IntegrityError:
-                        st.error(f"User with email '{new_user_email}' already exists. Please use a unique email.")
+                        st.error(
+                            f"User with email '{new_user_email}' already exists. Please use a unique email.")
                     except Exception as e:
                         st.error(f"Error creating user: {e}")
                 else:
-                    st.warning("Please provide both email and name for the new user.")
-        
+                    st.warning(
+                        "Please provide both email and name for the new user.")
+
         if st.session_state.created_user_id:
-            st.markdown(f"**Last Created User ID:** `{st.session_state.created_user_id}`")
+            st.markdown(
+                f"**Last Created User ID:** `{st.session_state.created_user_id}`")
             st.markdown(f"You can use this ID in subsequent sections.")
 
 elif st.session_state.current_page == "2. DB Connectivity & Pooling":
-    st.title("2. Establishing Asynchronous Database Connectivity and Connection Pooling")
+    st.title(
+        "2. Establishing Asynchronous Database Connectivity and Connection Pooling")
 
     st.markdown(f"InnovateAI's AI platform needs to handle many concurrent user requests without blocking. Alex knows that synchronous database operations can become a bottleneck, especially with a growing user base. He sets up an asynchronous database connection using SQLAlchemy 2.0 with the `asyncpg` driver and configures connection pooling to efficiently manage database resources. This configuration is essential for maximizing throughput and responsiveness.")
 
@@ -575,22 +654,25 @@ elif st.session_state.current_page == "2. DB Connectivity & Pooling":
     st.subheader("Database Initialization and Sample User Creation")
     if st.button("Initialize In-Memory SQLite Database & Create Sample Users"):
         try:
-            user1, user2 = asyncio.run(run_db_setup_and_create_user())
+            user1, user2 = run_async(run_db_setup_and_create_user())
             st.session_state.db_initialized = True
             if user1:
                 st.session_state.user_alex_id = user1.id
-                st.success(f"Initialized DB and created user: '{user1.name}' (ID: {user1.id})")
+                st.success(
+                    f"Initialized DB and created user: '{user1.name}' (ID: {user1.id})")
             if user2:
                 st.session_state.user_jane_id = user2.id
                 st.success(f"Created user: '{user2.name}' (ID: {user2.id})")
-            
-            st.info("Database schema initialized and sample users created. You can now proceed to other sections.")
+
+            st.info(
+                "Database schema initialized and sample users created. You can now proceed to other sections.")
         except Exception as e:
             st.error(f"Error initializing database or creating users: {e}")
-    
+
     if st.session_state.db_initialized:
         st.success("Database is initialized and ready!")
-        st.markdown(f"**Alex Smith User ID:** `{st.session_state.user_alex_id}`")
+        st.markdown(
+            f"**Alex Smith User ID:** `{st.session_state.user_alex_id}`")
         st.markdown(f"**Jane Doe User ID:** `{st.session_state.user_jane_id}`")
         st.markdown(f"The setup of `async_engine` and `AsyncSessionLocal` is central to Alex's async strategy. The `get_session` context manager ensures that database connections are properly acquired and released. The `pool_size` and `max_overflow` parameters are crucial for connection pooling, allowing the application to reuse existing connections and handle spikes in demand gracefully.")
     else:
@@ -604,10 +686,12 @@ elif st.session_state.current_page == "3. Repository Pattern & N+1":
     st.markdown(f"The Repository Pattern centralizes data access logic, making it easier to manage, test, and potentially swap out ORM or database technologies in the future. The N+1 query problem occurs when loading $N$ parent objects (e.g., users) and then subsequently executing $N$ additional queries to fetch their related child objects (e.g., scores), resulting in $N+1$ queries in total. This is inefficient. Eager loading techniques like `selectinload` reduce this to $1$ or $2$ queries, improving performance significantly.")
 
     if not st.session_state.db_initialized:
-        st.warning("Please initialize the database in the 'DB Connectivity & Pooling' section first.")
+        st.warning(
+            "Please initialize the database in the 'DB Connectivity & Pooling' section first.")
     else:
         st.subheader("Create Sample Scores for N+1 Demonstration")
-        user_to_add_score_to = st.text_input("User ID to add scores for (e.g., Alex's ID)", value=st.session_state.user_alex_id or "", key="n1_user_id_input")
+        user_to_add_score_to = st.text_input(
+            "User ID to add scores for (e.g., Alex's ID)", value=st.session_state.user_alex_id or "", key="n1_user_id_input")
         if st.button("Add 3 Sample Scores for User"):
             if user_to_add_score_to:
                 try:
@@ -616,9 +700,11 @@ elif st.session_state.current_page == "3. Repository Pattern & N+1":
                             for i in range(3):
                                 # create_sample_airscore commits the session, so no need for a session.commit() here
                                 await create_sample_airscore(user_to_add_score_to, occupation_code=f"DEV_ENG_{i+1}", session=session)
-                                await asyncio.sleep(0.01) # Ensure distinct timestamps
-                            st.success(f"3 sample scores added for user ID: {user_to_add_score_to}")
-                    asyncio.run(add_scores())
+                                # Ensure distinct timestamps
+                                await asyncio.sleep(0.01)
+                            st.success(
+                                f"3 sample scores added for user ID: {user_to_add_score_to}")
+                    run_async(add_scores())
                 except Exception as e:
                     st.error(f"Error adding scores: {e}")
             else:
@@ -626,7 +712,8 @@ elif st.session_state.current_page == "3. Repository Pattern & N+1":
 
         st.subheader("Demonstrating N+1 vs. Eager Loading")
         st.markdown(f"Observe the difference in fetching related data. A 'Simulated N+1' call will trigger multiple database queries (internally by lazy loading) compared to 'Eager Loading' which fetches all related data in fewer queries.")
-        user_to_fetch = st.text_input("User ID to fetch (e.g., Alex's ID or other created user)", value=st.session_state.user_alex_id or "", key="fetch_user_id_n1")
+        user_to_fetch = st.text_input("User ID to fetch (e.g., Alex's ID or other created user)",
+                                      value=st.session_state.user_alex_id or "", key="fetch_user_id_n1")
 
         col1, col2 = st.columns(2)
 
@@ -645,17 +732,20 @@ elif st.session_state.current_page == "3. Repository Pattern & N+1":
                                     # would typically trigger N additional queries (one per score)
                                     # due to SQLAlchemy's default lazy loading.
                                     # For this demo, we illustrate the *concept* of N+1.
-                                    for score in user.scores: 
-                                        scores_info.append(f"Score ID: {score.id}, AIR Score: {score.air_score}")
-                                    st.write(f"**User (ID: {user.id}, Email: {user.email})**")
+                                    for score in user.scores:
+                                        scores_info.append(
+                                            f"Score ID: {score.id}, AIR Score: {score.air_score}")
+                                    st.write(
+                                        f"**User (ID: {user.id}, Email: {user.email})**")
                                     st.write(f"**Scores (Simulated N+1):**")
                                     for s_info in scores_info:
                                         st.markdown(f"- {s_info}")
                                 else:
                                     st.warning("User not found.")
-                        asyncio.run(fetch_n1())
+                        run_async(fetch_n1())
                         end_time = time.time()
-                        st.info(f"Time taken (Simulated N+1): {end_time - start_time:.4f} seconds")
+                        st.info(
+                            f"Time taken (Simulated N+1): {end_time - start_time:.4f} seconds")
                     except Exception as e:
                         st.error(f"Error fetching with N+1: {e}")
                 else:
@@ -669,21 +759,25 @@ elif st.session_state.current_page == "3. Repository Pattern & N+1":
                         async def fetch_eager():
                             async for session in get_session():
                                 repo = UserRepository(session)
-                                user = await repo.get_user_with_scores_eager(user_to_fetch) # Uses selectinload
+                                # Uses selectinload
+                                user = await repo.get_user_with_scores_eager(user_to_fetch)
                                 if user:
                                     st.session_state.retrieved_user_with_scores = user
-                                    st.write(f"**User (ID: {user.id}, Email: {user.email})**")
+                                    st.write(
+                                        f"**User (ID: {user.id}, Email: {user.email})**")
                                     st.write(f"**Scores (Eager Loaded):**")
                                     if user.scores:
                                         for score in user.scores:
-                                            st.markdown(f"- Score ID: {score.id}, AIR Score: {score.air_score}")
+                                            st.markdown(
+                                                f"- Score ID: {score.id}, AIR Score: {score.air_score}")
                                     else:
                                         st.markdown("- No scores found.")
                                 else:
                                     st.warning("User not found.")
-                        asyncio.run(fetch_eager())
+                        run_async(fetch_eager())
                         end_time = time.time()
-                        st.info(f"Time taken (Eager Loading): {end_time - start_time:.4f} seconds")
+                        st.info(
+                            f"Time taken (Eager Loading): {end_time - start_time:.4f} seconds")
                     except Exception as e:
                         st.error(f"Error fetching with eager loading: {e}")
                 else:
@@ -699,10 +793,11 @@ elif st.session_state.current_page == "4. Caching with Redis":
     st.markdown(f"Caching is critical for high-performance applications, reducing latency and database load by storing frequently accessed data in a fast, in-memory store like Redis. The read-through strategy is robust for frequently read, less frequently updated data. It simplifies cache management by encapsulating the cache-or-DB logic.")
 
     st.markdown(r"$$ H = \frac{\text{Number of Cache Hits}}{\text{Total Number of Requests}} $$ The effectiveness of caching is measured by the Cache Hit Ratio ($$ H $$). where $$ H $$ is the cache hit ratio. A higher $$ H $$ indicates better cache effectiveness.")
-    st.markdown(r"$$ T_{\text{avg}} = H \times T_{\text{cache}} + (1-H) \times (T_{\text{cache}} + T_{\text{database}}) $$ The Average Access Time ($$ T_{\text{avg}} $$) with caching is given by the formula above, where $$ T_{\text{cache}} $$ is cache access time and $$ T_{\text{database}} $$ is database access time. A good caching strategy aims to minimize $$ T_{\text{avg}} $$.");
+    st.markdown(r"$$ T_{\text{avg}} = H \times T_{\text{cache}} + (1-H) \times (T_{\text{cache}} + T_{\text{database}}) $$ The Average Access Time ($$ T_{\text{avg}} $$) with caching is given by the formula above, where $$ T_{\text{cache}} $$ is cache access time and $$ T_{\text{database}} $$ is database access time. A good caching strategy aims to minimize $$ T_{\text{avg}} $$.")
 
     if not st.session_state.db_initialized:
-        st.warning("Please initialize the database in the 'DB Connectivity & Pooling' section first.")
+        st.warning(
+            "Please initialize the database in the 'DB Connectivity & Pooling' section first.")
     else:
         st.subheader("Interactive Caching Demonstration")
 
@@ -714,12 +809,13 @@ elif st.session_state.current_page == "4. Caching with Redis":
                         # Check if a specific user (e.g., Jane) already exists for demo continuity
                         user = await UserRepository(session).get_by_email("jane.doe@innovateai.com")
                         if not user:  # Fallback if Jane isn't there
-                            new_user = User(email="cache_demo@innovateai.com", name="Cache Demo User")
+                            new_user = User(
+                                email="cache_demo@innovateai.com", name="Cache Demo User")
                             user = await UserRepository(session).create(new_user)
                             await session.commit()
                             await session.refresh(user)
                         st.session_state.user_for_caching_id = user.id
-                        
+
                         # Create a sample score if none exists for this user
                         latest_score = await UserRepository(session).get_latest_score(user.id)
                         if not latest_score:
@@ -727,17 +823,20 @@ elif st.session_state.current_page == "4. Caching with Redis":
                             st.session_state.latest_airscore_id = score.id
                         else:
                             st.session_state.latest_airscore_id = latest_score.id
-                        
-                        st.info(f"User for caching demo (ID: `{st.session_state.user_for_caching_id}`) and latest score (ID: `{st.session_state.latest_airscore_id}`) ready.")
-                asyncio.run(create_cache_user_and_score())
+
+                        st.info(
+                            f"User for caching demo (ID: `{st.session_state.user_for_caching_id}`) and latest score (ID: `{st.session_state.latest_airscore_id}`) ready.")
+                run_async(create_cache_user_and_score())
             except Exception as e:
                 st.error(f"Error preparing user for caching demo: {e}")
-        
+
         user_id_for_cache = st.session_state.user_for_caching_id
 
         if user_id_for_cache:
-            st.markdown(f"Using **User ID**: `{user_id_for_cache}` for caching demonstration.")
-            st.markdown(f"**Latest AIRScore ID**: `{st.session_state.latest_airscore_id}`")
+            st.markdown(
+                f"Using **User ID**: `{user_id_for_cache}` for caching demonstration.")
+            st.markdown(
+                f"**Latest AIRScore ID**: `{st.session_state.latest_airscore_id}`")
 
             col1_cache, col2_cache = st.columns(2)
             with col1_cache:
@@ -746,7 +845,8 @@ elif st.session_state.current_page == "4. Caching with Redis":
                     try:
                         async def fetch_user_cached_interaction():
                             async for session in get_session():
-                                cached_repo = CachedUserRepository(session, REDIS_CLIENT)
+                                cached_repo = CachedUserRepository(
+                                    session, REDIS_CLIENT)
                                 user = await cached_repo.get_by_id_cached(user_id_for_cache)
                                 if user:
                                     st.write(f"**Cached User Details:**")
@@ -756,33 +856,38 @@ elif st.session_state.current_page == "4. Caching with Redis":
                                         "created_at": user.created_at.isoformat() if user.created_at else None
                                     })
                                 else:
-                                    st.warning("User not found in cache or DB.")
-                        asyncio.run(fetch_user_cached_interaction())
+                                    st.warning(
+                                        "User not found in cache or DB.")
+                        run_async(fetch_user_cached_interaction())
                         end_time = time.time()
-                        st.markdown(f"Time taken: {end_time - start_time:.4f} seconds")
+                        st.markdown(
+                            f"Time taken: {end_time - start_time:.4f} seconds")
                         # Simplified cache hit/miss tracking based on presence of REDIS_CLIENT.get call
                         # For mock, REDIS_CLIENT.get.called will be True if called. return_value is None on mock miss.
-                        if REDIS_CLIENT.get.called: # Check if the cache was actually queried
+                        # Check if the cache was actually queried
+                        if hasattr(REDIS_CLIENT.get, 'called') and REDIS_CLIENT.get.called:
                             # Check if the mock client returned a non-None value to simulate a hit
                             # For a real client, data will be non-None on hit.
                             if REDIS_CLIENT.get.return_value is not None:
-                                 st.session_state.cache_hits += 1
+                                st.session_state.cache_hits += 1
                             else:
-                                 st.session_state.cache_misses += 1
-                            REDIS_CLIENT.get.reset_mock() # Reset mock for next call if using mock client
+                                st.session_state.cache_misses += 1
+                            REDIS_CLIENT.get.reset_mock()  # Reset mock for next call if using mock client
                     except Exception as e:
                         st.error(f"Error fetching user with cache: {e}")
-            
+
             with col2_cache:
                 if st.button("Fetch Latest AIRScore (Cached)", key="fetch_score_cached_btn"):
                     start_time = time.time()
                     try:
                         async def fetch_score_cached_interaction():
                             async for session in get_session():
-                                cached_repo = CachedUserRepository(session, REDIS_CLIENT)
+                                cached_repo = CachedUserRepository(
+                                    session, REDIS_CLIENT)
                                 score = await cached_repo.get_latest_score_cached(user_id_for_cache)
                                 if score:
-                                    st.write(f"**Cached Latest AIRScore Details:**")
+                                    st.write(
+                                        f"**Cached Latest AIRScore Details:**")
                                     st.json({
                                         "id": score.id, "user_id": score.user_id,
                                         "air_score": score.air_score, "occupation": score.occupation_code,
@@ -790,39 +895,45 @@ elif st.session_state.current_page == "4. Caching with Redis":
                                         "created_at": score.created_at.isoformat() if score.created_at else None
                                     })
                                 else:
-                                    st.warning("Latest AIRScore not found in cache or DB.")
-                        asyncio.run(fetch_score_cached_interaction())
+                                    st.warning(
+                                        "Latest AIRScore not found in cache or DB.")
+                        run_async(fetch_score_cached_interaction())
                         end_time = time.time()
-                        st.markdown(f"Time taken: {end_time - start_time:.4f} seconds")
-                        if REDIS_CLIENT.get.called:
+                        st.markdown(
+                            f"Time taken: {end_time - start_time:.4f} seconds")
+                        if hasattr(REDIS_CLIENT.get, 'called') and REDIS_CLIENT.get.called:
                             if REDIS_CLIENT.get.return_value is not None:
-                                 st.session_state.cache_hits += 1
+                                st.session_state.cache_hits += 1
                             else:
-                                 st.session_state.cache_misses += 1
+                                st.session_state.cache_misses += 1
                             REDIS_CLIENT.get.reset_mock()
                     except Exception as e:
                         st.error(f"Error fetching score with cache: {e}")
-            
+
             st.markdown(f"---")
             st.subheader("Cache Invalidation")
-            st.markdown(f"After an update, old cached data needs to be purged. Invalidate the cache for User ID: `{user_id_for_cache}`.")
+            st.markdown(
+                f"After an update, old cached data needs to be purged. Invalidate the cache for User ID: `{user_id_for_cache}`.")
             if st.button("Invalidate Cache for this User", key="invalidate_cache_btn"):
                 try:
                     async def invalidate_cache_interaction():
                         # The session might not be strictly needed for cache invalidation for the redis client,
                         # but we pass it for consistency with repository pattern.
-                        async for session in get_session(): 
-                            cached_repo = CachedUserRepository(session, REDIS_CLIENT)
+                        async for session in get_session():
+                            cached_repo = CachedUserRepository(
+                                session, REDIS_CLIENT)
                             await cached_repo.invalidate_user_cache(user_id_for_cache)
-                            st.success(f"Cache invalidated for user ID: {user_id_for_cache}")
-                    asyncio.run(invalidate_cache_interaction())
+                            st.success(
+                                f"Cache invalidated for user ID: {user_id_for_cache}")
+                    run_async(invalidate_cache_interaction())
                 except Exception as e:
                     st.error(f"Error invalidating cache: {e}")
 
             st.markdown(f"---")
             st.subheader("Cache Metrics (Simulated)")
             total_requests = st.session_state.cache_hits + st.session_state.cache_misses
-            hit_ratio = (st.session_state.cache_hits / total_requests) if total_requests > 0 else 0
+            hit_ratio = (st.session_state.cache_hits /
+                         total_requests) if total_requests > 0 else 0
             st.markdown(f"**Cache Hits:** {st.session_state.cache_hits}")
             st.markdown(f"**Cache Misses:** {st.session_state.cache_misses}")
             st.markdown(f"**Total Requests:** {total_requests}")
@@ -840,7 +951,8 @@ elif st.session_state.current_page == "5. Eventing (Outbox Pattern)":
     st.markdown(f"The Outbox Pattern helps achieve **eventual consistency**. In a distributed system, data might not be immediately consistent across all services, but it will eventually converge. By guaranteeing events are eventually delivered, the Outbox pattern facilitates this convergence without requiring a complex two-phase commit protocol across services.")
 
     if not st.session_state.db_initialized:
-        st.warning("Please initialize the database in the 'DB Connectivity & Pooling' section first.")
+        st.warning(
+            "Please initialize the database in the 'DB Connectivity & Pooling' section first.")
     else:
         st.subheader("Generate an AIRScore and a Pending Domain Event")
 
@@ -851,31 +963,36 @@ elif st.session_state.current_page == "5. Eventing (Outbox Pattern)":
                     async for session in get_session():
                         user = await UserRepository(session).get_by_email("event_demo@innovateai.com")
                         if not user:
-                            new_user = User(email="event_demo@innovateai.com", name="Event Demo User")
+                            new_user = User(
+                                email="event_demo@innovateai.com", name="Event Demo User")
                             user = await UserRepository(session).create(new_user)
                             await session.commit()
                             await session.refresh(user)
                         st.session_state.event_user_id = user.id
-                        st.info(f"User for eventing demo (ID: `{st.session_state.event_user_id}`) ready.")
-                asyncio.run(create_event_user())
+                        st.info(
+                            f"User for eventing demo (ID: `{st.session_state.event_user_id}`) ready.")
+                run_async(create_event_user())
             except Exception as e:
                 st.error(f"Error preparing user for eventing demo: {e}")
 
         user_id_for_event = st.session_state.event_user_id
         if user_id_for_event:
-            st.markdown(f"Using **User ID**: `{user_id_for_event}` for eventing demonstration.")
-            
+            st.markdown(
+                f"Using **User ID**: `{user_id_for_event}` for eventing demonstration.")
+
             if st.button("Calculate & Store AIRScore (Creates Pending Event)", key="create_event_btn"):
                 try:
                     async def calculate_score_and_event_interaction():
                         st.info("Calling `calculate_and_store_airscore`...")
                         score, event = await calculate_and_store_airscore(user_id_for_event, "AI_ASSESSOR")
-                        st.success(f"AIRScore (ID: `{score.id}`) calculated and DomainEvent (ID: `{event.id}`, Type: `{event.event_type}`) recorded as 'pending'.")
-                    
-                    asyncio.run(calculate_score_and_event_interaction())
+                        st.success(
+                            f"AIRScore (ID: `{score.id}`) calculated and DomainEvent (ID: `{event.id}`, Type: `{event.event_type}`) recorded as 'pending'.")
+
+                    run_async(calculate_score_and_event_interaction())
                 except Exception as e:
-                    st.error(f"Error calculating score and recording event: {e}")
-            
+                    st.error(
+                        f"Error calculating score and recording event: {e}")
+
             st.subheader("Event Publisher Status")
             col1_pub, col2_pub = st.columns(2)
             with col1_pub:
@@ -884,58 +1001,66 @@ elif st.session_state.current_page == "5. Eventing (Outbox Pattern)":
                     st.session_state.publisher_stop_event.clear()
 
                     async def run_publisher_in_background():
-                        st.info("Event publisher starting... Processing up to 3 cycles of events.")
+                        st.info(
+                            "Event publisher starting... Processing up to 3 cycles of events.")
                         processed_count = 0
-                        for _ in range(3): # Simulate 3 polling cycles
+                        for _ in range(3):  # Simulate 3 polling cycles
                             if st.session_state.publisher_stop_event.is_set():
                                 break
-                            async for session in get_session(): # Acquire a session for this cycle
+                            async for session in get_session():  # Acquire a session for this cycle
                                 event_repo = DomainEventRepository(session)
                                 pending_events = await event_repo.get_pending_events(limit=5)
                                 if pending_events:
-                                    event_ids_to_publish = [event.id for event in pending_events]
-                                    await event_repo.mark_as_published(event_ids_to_publish) # This method commits
+                                    event_ids_to_publish = [
+                                        event.id for event in pending_events]
+                                    # This method commits
+                                    await event_repo.mark_as_published(event_ids_to_publish)
                                     processed_count += len(event_ids_to_publish)
-                                    st.markdown(f"*(Publisher activity)* Processed {len(event_ids_to_publish)} events.")
-                                await asyncio.sleep(0.5) 
+                                    st.markdown(
+                                        f"*(Publisher activity)* Processed {len(event_ids_to_publish)} events.")
+                                await asyncio.sleep(0.5)
                         st.session_state.event_publisher_running = False
-                        st.success(f"Event publisher finished its simulated run, processed {processed_count} events.")
-                    
+                        st.success(
+                            f"Event publisher finished its simulated run, processed {processed_count} events.")
+
                     # Use a new event loop or ensure this runs in the existing one without blocking Streamlit's main loop
                     # For simplicity in Streamlit, directly calling asyncio.run in a button callback
                     # means it will block until done. If a truly background process is needed
                     # in a real app, it would be a separate thread/process.
-                    asyncio.run(run_publisher_in_background())
-                    st.rerun() 
-            
+                    run_async(run_publisher_in_background())
+                    st.rerun()
+
             with col2_pub:
                 if st.button("Stop Event Publisher", key="stop_publisher_btn", disabled=not st.session_state.event_publisher_running):
                     st.session_state.publisher_stop_event.set()
                     st.session_state.event_publisher_running = False
-                    st.warning("Event publisher signalled to stop (will stop after current cycle).")
+                    st.warning(
+                        "Event publisher signalled to stop (will stop after current cycle).")
                     st.rerun()
 
             st.subheader("Current Event Status")
-            
+
             async def refresh_events_status_internal():
                 async for session in get_session():
                     event_repo = DomainEventRepository(session)
                     pending_events = await event_repo.get_pending_events(limit=10)
                     all_events_result = await session.execute(select(DomainEvent).order_by(DomainEvent.created_at.desc()))
                     all_events = all_events_result.scalars().all()
-                    
+
                     st.session_state.pending_events_display = [
-                        {"ID": e.id, "Type": e.event_type, "Status": e.status, "Created": e.created_at.strftime("%Y-%m-%d %H:%M:%S")}
+                        {"ID": e.id, "Type": e.event_type, "Status": e.status,
+                            "Created": e.created_at.strftime("%Y-%m-%d %H:%M:%S")}
                         for e in pending_events
                     ]
                     st.session_state.processed_events_display = [
-                        {"ID": e.id, "Type": e.event_type, "Status": e.status, "Published": e.published_at.strftime("%Y-%m-%d %H:%M:%S") if e.published_at else "N/A"}
+                        {"ID": e.id, "Type": e.event_type, "Status": e.status, "Published": e.published_at.strftime(
+                            "%Y-%m-%d %H:%M:%S") if e.published_at else "N/A"}
                         for e in all_events if e.status == "published"
                     ]
 
             if st.button("Refresh Event Status Now", key="refresh_event_status_btn"):
-                asyncio.run(refresh_events_status_internal())
-            
+                run_async(refresh_events_status_internal())
+
             st.markdown("---")
             st.markdown(f"**Pending Events (Awaiting Publication)**")
             if st.session_state.pending_events_display:

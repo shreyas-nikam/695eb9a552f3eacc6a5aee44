@@ -13,3 +13,4 @@ asyncpg
 redis
 pydantic
 uuid
+aiosqlite
